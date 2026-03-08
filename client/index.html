@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student World 🌍</title>
+  <script src="https://unpkg.com/globe.gl"></script>
+  <script src="https://unpkg.com/socket.io-client/dist/socket.io.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Header -->
+  <div id="header">
+    <h1>🌍 Student World</h1>
+    <span id="student-count">0 students on the map</span>
+  </div>
+
+  <!-- Globe container -->
+  <div id="globe-container"></div>
+
+  <!-- Join Panel -->
+  <div id="join-panel">
+    <div id="join-form">
+      <h2>Drop your pin! 📍</h2>
+      <p>Let the world know where you're from</p>
+      <input type="text" id="name-input" placeholder="Your name" maxlength="30" />
+      <select id="country-select">
+        <option value="">Select your country...</option>
+      </select>
+      <button id="join-btn">Join the Map 🚀</button>
+    </div>
+    <div id="joined-msg" style="display:none;">
+      <div id="joined-avatar">👤</div>
+      <h2 id="joined-name"></h2>
+      <p id="joined-country"></p>
+      <p class="hint">Click any pin to see who's there!</p>
+    </div>
+  </div>
+
+  <!-- Student card popup -->
+  <div id="student-card" style="display:none;">
+    <button id="close-card">✕</button>
+    <div id="card-avatar">👤</div>
+    <h3 id="card-name"></h3>
+    <p id="card-country"></p>
+    <p id="card-time"></p>
+  </div>
+
+  <script src="globe.js"></script>
+</body>
+</html>
