@@ -3,50 +3,152 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Student World 🌍</title>
+  <title>Where We Come From 🌍</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/globe.gl"></script>
   <script src="https://unpkg.com/socket.io-client/dist/socket.io.min.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-  <!-- Header -->
+  <!-- ─── Header ─────────────────────────────────────────────────────────── -->
   <div id="header">
-    <h1>🌍 Student World</h1>
-    <span id="student-count">0 students on the map</span>
+    <div id="header-left">
+      <div id="header-meta">OGL 360 · Intercultural Leadership · Dr. Hirshorn</div>
+      <h1 id="header-title">Where We Come From</h1>
+    </div>
+
+    <div id="header-center">
+      <button id="view-globe-btn" class="view-btn active">🌍 Student Map</button>
+      <button id="view-dash-btn" class="view-btn">📊 Dashboard</button>
+    </div>
+
+    <div id="header-right">
+      <div class="stat-item">
+        <span class="stat-num" id="student-count">0 students</span>
+        <span class="stat-label">on the map</span>
+      </div>
+    </div>
   </div>
 
-  <!-- Globe container -->
+  <!-- ─── Globe container ─────────────────────────────────────────────────── -->
   <div id="globe-container"></div>
 
-  <!-- Join Panel -->
+  <!-- ─── Dashboard view (hidden by default) ─────────────────────────────── -->
+  <div id="dashboard-view" style="display:none;"></div>
+
+  <!-- ─── Leaderboard panel (top-left) ───────────────────────────────────── -->
+  <div id="leaderboard-panel">
+    <div id="leaderboard-header">
+      <span>🏆 Top Explorers</span>
+      <button id="lb-toggle-btn"><span id="lb-toggle-icon">▼</span></button>
+    </div>
+    <div id="leaderboard-body">
+      <div id="leaderboard-list">
+        <div style="color:rgba(255,255,255,0.3);font-size:12px;padding:8px 0;">Be the first to join!</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Quest panel (bottom-left, shown after join) ─────────────────────── -->
+  <div id="quest-panel" style="display:none;">
+    <div id="quest-header">
+      <span>🎯 Quests</span>
+      <button id="quest-toggle-btn"><span id="quest-toggle-icon">▼</span></button>
+    </div>
+    <div id="quest-body">
+      <div id="quest-list"></div>
+    </div>
+  </div>
+
+  <!-- ─── Badge toast notification ────────────────────────────────────────── -->
+  <div id="badge-toast" style="display:none;"></div>
+
+  <!-- ─── Join Panel ──────────────────────────────────────────────────────── -->
   <div id="join-panel">
     <div id="join-form">
-      <h2>Drop your pin! 📍</h2>
-      <p>Let the world know where you're from</p>
-      <input type="text" id="name-input" placeholder="Your name" maxlength="30" />
-      <select id="country-select">
-        <option value="">Select your country...</option>
-      </select>
-      <button id="join-btn">Join the Map 🚀</button>
+      <h2>📍 Drop Your Pin</h2>
+      <p class="join-sub">Share your story with the class</p>
+
+      <div id="form-error" style="display:none;"></div>
+
+      <div class="form-group">
+        <label class="form-label">Your Name *</label>
+        <input type="text" id="name-input" placeholder="e.g. Maria Santos" maxlength="40" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Where are you from? *</label>
+        <input type="text" id="location-input" placeholder="e.g. São Paulo, Brazil" maxlength="60" />
+        <select id="country-select" style="margin-top:6px;">
+          <option value="">Select country for map pin...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Your Interests</label>
+        <input type="text" id="interests-input" placeholder="e.g. Classical dance, Social enterprise" maxlength="80" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Leadership Value *</label>
+        <div id="value-picker"></div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Cultural Insight</label>
+        <textarea id="cultural-input" placeholder="What did your background teach you about leadership?" maxlength="280"></textarea>
+      </div>
+
+      <button id="join-btn">Place My Pin 🌍</button>
     </div>
+
+    <!-- Joined state -->
     <div id="joined-msg" style="display:none;">
-      <div id="joined-avatar">👤</div>
+      <div id="joined-avatar">🌍</div>
       <h2 id="joined-name"></h2>
       <p id="joined-country"></p>
-      <p class="hint">Click any pin to see who's there!</p>
+      <p id="joined-value"></p>
+      <p id="joined-xp"></p>
+      <div id="joined-badges" class="badge-row"></div>
+      <p class="hint">Click any pin to explore the world!</p>
     </div>
   </div>
 
-  <!-- Student card popup -->
+  <!-- ─── Student card popup ──────────────────────────────────────────────── -->
   <div id="student-card" style="display:none;">
     <button id="close-card">✕</button>
-    <div id="card-avatar">👤</div>
+
+    <div id="card-avatar">🌍</div>
     <h3 id="card-name"></h3>
-    <p id="card-country"></p>
+    <p id="card-location"></p>
+    <p id="card-interests"></p>
+    <span id="card-value"></span>
+
+    <div id="card-cultural-wrap">
+      <p id="card-cultural"></p>
+    </div>
+
+    <div id="card-meta">
+      <span id="card-xp"></span>
+      <span id="card-first"></span>
+    </div>
     <p id="card-time"></p>
+
+    <!-- Badge row for this student -->
+    <div id="card-badges" class="badge-row" style="display:none;flex-wrap:wrap;gap:5px;margin-top:8px;"></div>
+
+    <!-- Country culture facts -->
+    <div id="card-facts-section" style="display:none;">
+      <div class="card-divider"></div>
+      <p id="card-facts-tagline"></p>
+      <div id="card-facts-list"></div>
+      <p id="card-facts-insight"></p>
+    </div>
   </div>
 
+  <script src="culture-facts.js"></script>
+  <script src="quests.js"></script>
   <script src="globe.js"></script>
 </body>
 </html>

@@ -1,0 +1,4 @@
+node_modules
+.env
+student-world.db
+*.db

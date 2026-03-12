@@ -8,8 +8,13 @@
     "dev": "nodemon server/index.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "dotenv": "^17.3.1",
     "express": "^4.18.2",
-    "socket.io": "^4.7.2"
+    "ltijs": "^5.9.9",
+    "ltijs-sequelize": "^2.4.4",
+    "socket.io": "^4.7.2",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
