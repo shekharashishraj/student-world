@@ -5,6 +5,7 @@ const { config } = require('./config');
 const DEBRIEF_PROMPT_VERSION = 'ogl200-module-2-debrief-v1';
 const REFLECTION_PROMPT_VERSION = 'ogl200-reflection-v1';
 const NPC_CHAT_PROMPT_VERSION = 'nexus-demo-npc-chat-v1';
+const SUPPORTED_REASONING_EFFORTS = new Set(['none', 'low', 'medium', 'high']);
 
 const DEBRIEF_SCHEMA = {
   type: 'object',
@@ -85,6 +86,11 @@ function validateStructuredText(payload, schema) {
   return schema.required.every((key) => typeof payload[key] === 'string' && payload[key].trim().length > 0);
 }
 
+function getReasoningEffort() {
+  const candidate = String(config.openai.reasoningEffort || 'none').toLowerCase();
+  return SUPPORTED_REASONING_EFFORTS.has(candidate) ? candidate : 'none';
+}
+
 class AIService {
   constructor(logger) {
     this.logger = logger;
@@ -127,7 +133,7 @@ class AIService {
         {
           model: config.openai.model,
           store: false,
-          reasoning: { effort: config.openai.reasoningEffort },
+          reasoning: { effort: getReasoningEffort() },
           instructions: [
             'You are a leadership course debrief assistant for OGL 200.',
             'Use only the structured input provided by the application.',
@@ -208,7 +214,7 @@ class AIService {
         {
           model: config.openai.model,
           store: false,
-          reasoning: { effort: config.openai.reasoningEffort },
+          reasoning: { effort: getReasoningEffort() },
           instructions: [
             'Summarize a student leadership reflection for OGL 200.',
             'Do not mention grades, rewards, or hidden system state.',
@@ -300,7 +306,7 @@ class AIService {
         {
           model: config.openai.model,
           store: false,
-          reasoning: { effort: 'minimal' },
+          reasoning: { effort: getReasoningEffort() },
           instructions: [
             input.npc.prompt,
             `Player name: ${input.playerProfile.playerName || 'Student'}.`,

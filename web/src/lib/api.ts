@@ -55,6 +55,21 @@ type RequestOptions = RequestInit & {
   bodyJson?: unknown;
 };
 
+function buildApiErrorMessage(path: string, status: number, payload?: unknown): string {
+  if (payload && typeof payload === 'object' && 'error' in payload) {
+    const nested = (payload as { error?: { message?: unknown } }).error;
+    if (nested && typeof nested.message === 'string' && nested.message.trim()) {
+      return nested.message;
+    }
+  }
+
+  if (status === 502 || status === 503 || status === 504) {
+    return `The API for ${path} is unavailable. Make sure the backend server is running on port 3000.`;
+  }
+
+  return `Request failed with ${status}`;
+}
+
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const session = readStoredSession();
   const headers = new Headers(options.headers || {});
@@ -70,19 +85,41 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     headers.set('content-type', 'application/json');
   }
 
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    credentials: 'include',
-    body: options.bodyJson !== undefined ? JSON.stringify(options.bodyJson) : options.body,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers,
+      credentials: 'include',
+      body: options.bodyJson !== undefined ? JSON.stringify(options.bodyJson) : options.body,
+    });
+  } catch {
+    throw new Error(`Unable to reach the API for ${path}. Make sure the backend server is running on port 3000.`);
+  }
 
   if (response.status === 204) return undefined as T;
 
-  const payload = await response.json();
+  const rawText = await response.text();
+  const contentType = response.headers.get('content-type') || '';
+  const trimmedText = rawText.trim();
+  let payload: unknown = undefined;
+
+  if (trimmedText.length > 0) {
+    if (contentType.includes('application/json')) {
+      try {
+        payload = JSON.parse(trimmedText);
+      } catch {
+        throw new Error(`The API for ${path} returned malformed JSON.`);
+      }
+    } else if (!response.ok) {
+      throw new Error(trimmedText);
+    } else {
+      throw new Error(`The API for ${path} returned an unexpected ${contentType || 'non-JSON'} response.`);
+    }
+  }
+
   if (!response.ok) {
-    const message = payload?.error?.message || `Request failed with ${response.status}`;
-    throw new Error(message);
+    throw new Error(buildApiErrorMessage(path, response.status, payload));
   }
 
   return payload as T;
