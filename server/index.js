@@ -31,12 +31,6 @@ const {
 
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: [config.webDevOrigin, config.appUrl],
-    credentials: true,
-  },
-});
 
 const aiService = new AIService(logger);
 const hubPresence = new Map();
@@ -50,6 +44,39 @@ function makeHttpError(statusCode, message) {
   error.statusCode = statusCode;
   return error;
 }
+
+function isLocalDevOrigin(origin) {
+  try {
+    const parsed = new URL(origin);
+    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+
+  const allowed = new Set([config.webDevOrigin, config.appUrl].filter(Boolean));
+  if (allowed.has(origin)) return true;
+
+  // Vite can move to 5174, 5175, etc. if the preferred port is already in use.
+  if (!config.isProduction && isLocalDevOrigin(origin)) return true;
+
+  return false;
+}
+
+function applyCorsOrigin(origin, callback) {
+  if (isAllowedOrigin(origin)) return callback(null, true);
+  return callback(makeHttpError(403, 'Origin not allowed by CORS.'));
+}
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: applyCorsOrigin,
+    credentials: true,
+  },
+});
 
 function validateLeadershipPayload(payload) {
   if (!Array.isArray(payload.topTraits) || payload.topTraits.length !== 2) {
@@ -352,12 +379,7 @@ async function createApiServer() {
   });
   app.use(
     cors({
-      origin(origin, callback) {
-        if (!origin) return callback(null, true);
-        const allowed = [config.webDevOrigin, config.appUrl];
-        if (allowed.includes(origin)) return callback(null, true);
-        return callback(new Error('Origin not allowed by CORS.'));
-      },
+      origin: applyCorsOrigin,
       credentials: true,
     }),
   );
