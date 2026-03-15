@@ -4,8 +4,8 @@
     {
       "name": "student-world",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000
+      "runtimeArgs": ["run", "web:dev"],
+      "port": 5173
     }
   ]
 }

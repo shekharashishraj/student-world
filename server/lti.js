@@ -1,92 +1,121 @@
 const { Provider } = require('ltijs');
 const Database = require('ltijs-sequelize');
+const { config } = require('./config');
 
-// ─── SQLite database (in-memory for demo; swap storage path for persistence) ──
-const db = new Database('sqlite', null, null, {
-  dialect: 'sqlite',
-  storage: process.env.NODE_ENV === 'production'
-    ? './student-world.db'
-    : ':memory:',          // in-memory is fine for demos
-  logging: false,
-});
-
-// ─── Locale → Country fallback map ───────────────────────────────────────────
-const LOCALE_TO_COUNTRY = {
-  'en-US': 'USA', 'en-GB': 'United Kingdom', 'en-AU': 'Australia',
-  'en-NZ': 'New Zealand', 'en-CA': 'Canada', 'en-IN': 'India',
-  'en-ZA': 'South Africa', 'en-NG': 'Nigeria', 'en-KE': 'Kenya',
-  'en-GH': 'Ghana', 'en-UG': 'Uganda', 'en-ZW': 'Zimbabwe',
-  'ja': 'Japan', 'zh': 'China', 'zh-CN': 'China', 'zh-TW': 'Taiwan',
-  'de': 'Germany', 'de-AT': 'Austria', 'de-CH': 'Switzerland',
-  'fr': 'France', 'fr-BE': 'Belgium',
-  'hi': 'India', 'pt-BR': 'Brazil', 'pt': 'Portugal',
-  'ar': 'Egypt', 'ar-JO': 'Jordan', 'ar-SA': 'Saudi Arabia',
-  'ko': 'South Korea', 'ru': 'Russia', 'uk': 'Ukraine',
-  'es': 'Spain', 'es-MX': 'Mexico', 'es-CO': 'Colombia',
-  'es-PE': 'Peru', 'es-VE': 'Venezuela', 'es-CL': 'Chile',
-  'nl': 'Netherlands', 'pl': 'Poland', 'it': 'Italy',
-  'sv': 'Sweden', 'no': 'Norway', 'fi': 'Finland', 'da': 'Denmark',
-  'cs': 'Czech Republic', 'ro': 'Romania', 'hu': 'Hungary',
-  'el': 'Greece', 'tr': 'Turkey', 'he': 'Israel',
-  'id': 'Indonesia', 'ms': 'Malaysia', 'th': 'Thailand',
-  'vi': 'Vietnam', 'bn': 'Bangladesh', 'ur': 'Pakistan',
-  'fa': 'Iran', 'si': 'Sri Lanka', 'am': 'Ethiopia',
-  'sw': 'Tanzania', 'tl': 'Philippines',
-};
-
-// ─── LTI 1.3 Provider Setup ───────────────────────────────────────────────────
-Provider.setup(
-  process.env.LTI_KEY || 'STUDENT_WORLD_DEV_KEY_MIN32CHARSLONG!!',
-  { plugin: db },
+const db = new Database(
+  config.postgres.database,
+  config.postgres.username,
+  config.postgres.password,
   {
-    cookies: { secure: false, sameSite: '' },
-    devMode: process.env.NODE_ENV !== 'production',
-  }
+    host: config.postgres.host,
+    port: config.postgres.port,
+    dialect: 'postgres',
+    logging: false,
+  },
 );
 
-// ─── Called on successful LTI launch ─────────────────────────────────────────
-Provider.onConnect(async (token, req, res) => {
-  const name = token.userInfo?.name
-    || token.userInfo?.given_name
-    || 'Student';
+const LOCALE_TO_COUNTRY = {
+  'en-US': 'USA',
+  'en-GB': 'United Kingdom',
+  'en-AU': 'Australia',
+  'en-NZ': 'New Zealand',
+  'en-CA': 'Canada',
+  'en-IN': 'India',
+  ja: 'Japan',
+  'zh-CN': 'China',
+  fr: 'France',
+  de: 'Germany',
+  es: 'Spain',
+  'es-MX': 'Mexico',
+  pt: 'Portugal',
+  'pt-BR': 'Brazil',
+};
 
-  const locale = token.platformContext?.locale || '';
-  const customCountry = token.platformContext?.custom?.country || '';
-  const country = customCountry || LOCALE_TO_COUNTRY[locale] || '';
-
-  const params = new URLSearchParams({ name, lti: '1' });
-  if (country) params.set('country', country);
-
-  return res.redirect(`/?${params.toString()}`);
+Provider.setup(config.lti.key, { plugin: db }, {
+  cookies: { secure: false, sameSite: '' },
+  devMode: !config.isProduction,
 });
 
-// ─── Register Canvas as LTI platform (called once at startup) ─────────────────
-async function registerPlatform() {
-  const canvasUrl = process.env.CANVAS_URL || 'https://canvas.instructure.com';
-  const clientId = process.env.LTI_CLIENT_ID;
+function configureLtiHooks(logger) {
+  Provider.onConnect(async (token, req, res) => {
+    const displayName =
+      token.userInfo?.name ||
+      token.userInfo?.given_name ||
+      token.user ||
+      'Student';
+    const locale = token.platformContext?.locale || '';
+    const ltiUserId = token.user;
+    const country =
+      token.platformContext?.custom?.country ||
+      LOCALE_TO_COUNTRY[locale] ||
+      '';
 
-  if (!clientId) {
-    console.log('⚠  LTI_CLIENT_ID not set — skipping Canvas platform registration.');
-    console.log('   Set LTI_CLIENT_ID in .env after configuring the tool in Canvas.');
+    const baseUrl = config.isProduction ? config.appUrl : config.webDevOrigin;
+    const redirectUrl = new URL(baseUrl);
+
+    redirectUrl.searchParams.set('ltiUserId', ltiUserId);
+    redirectUrl.searchParams.set('name', displayName);
+    if (country) redirectUrl.searchParams.set('country', country);
+    if (locale) redirectUrl.searchParams.set('locale', locale);
+    redirectUrl.searchParams.set('lti', '1');
+
+    logger.info(
+      {
+        event: 'lti.launch.success',
+        lti_user_id: ltiUserId,
+        route: req.path,
+        status: 302,
+      },
+      'LTI launch completed and redirected to the web client.',
+    );
+
+    return res.redirect(redirectUrl.toString());
+  });
+}
+
+async function registerPlatform(logger) {
+  if (!config.lti.clientId) {
+    logger.warn(
+      {
+        event: 'lti.platform.skipped',
+        reason: 'missing_client_id',
+      },
+      'LTI_CLIENT_ID not set. Skipping Canvas platform registration.',
+    );
     return;
   }
 
   try {
     await Provider.registerPlatform({
-      url: canvasUrl,
+      url: config.lti.canvasUrl,
       name: 'ASU Canvas',
-      clientId,
-      authenticationEndpoint: `${canvasUrl}/api/lti/authorize_redirect`,
-      accesstokenEndpoint: `${canvasUrl}/login/oauth2/token`,
+      clientId: config.lti.clientId,
+      authenticationEndpoint: `${config.lti.canvasUrl}/api/lti/authorize_redirect`,
+      accesstokenEndpoint: `${config.lti.canvasUrl}/login/oauth2/token`,
       authConfig: {
         method: 'JWK_SET',
-        key: `${canvasUrl}/api/lti/security/jwks`,
+        key: `${config.lti.canvasUrl}/api/lti/security/jwks`,
       },
     });
-    console.log(`✅ Canvas LTI platform registered: ${canvasUrl}`);
-  } catch (err) {
-    console.error('LTI platform registration failed:', err.message);
+
+    logger.info(
+      {
+        event: 'lti.platform.registered',
+        canvas_url: config.lti.canvasUrl,
+      },
+      'Canvas LTI platform registered.',
+    );
+  } catch (error) {
+    logger.error(
+      {
+        event: 'lti.platform.registration_failed',
+        canvas_url: config.lti.canvasUrl,
+        error_name: error.name,
+        error_message: error.message,
+      },
+      'Canvas LTI platform registration failed.',
+    );
   }
 }
 
-module.exports = { Provider, registerPlatform };
+module.exports = { Provider, configureLtiHooks, registerPlatform };

@@ -189,7 +189,7 @@ Advanced mode: two students enter the same room from their separate screens. The
 |---|---|---|
 | 3D Globe → Room | Three.js (camera flythrough) + globe.gl | Transition animation |
 | Room 3D Render | Three.js scene or Babylon.js | Furniture, characters, lighting |
-| Character Avatars | Ready Player Me API or 3D illustrated assets | AI character bodies |
+| Character Avatars | Avaturn or custom GLB avatars / 3D illustrated assets | AI character bodies |
 | Environment Image | DALL-E 3 or Stable Diffusion API | Background scene image |
 | AI Brain | Claude Sonnet 4.5 (multi-character orchestration) | Character responses |
 | World Evaluation | Claude opus-4-5 with extended thinking | Rubric-based assessment |
