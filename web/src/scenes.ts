@@ -1,4 +1,5 @@
 import {
+  Animation,
   AnimationGroup,
   ArcRotateCamera,
   Color3,
@@ -137,6 +138,34 @@ async function loadAnimatedCharacter(
       return name.replace(/^mixamorig:/, '').replace(/_\$AssimpFbx\$_\w+$/, '');
     }
 
+    function createInPlaceAnimation(animation: Animation, boneName: string): Animation {
+      if (canonicalBoneName(boneName) !== 'Hips' || animation.targetProperty !== 'position') {
+        return animation;
+      }
+
+      const sanitized = animation.clone(`${animation.name || 'clip'}-in-place`);
+      const keys = sanitized.getKeys();
+      const firstKey = keys[0];
+      if (!firstKey || !(firstKey.value instanceof Vector3)) {
+        return sanitized;
+      }
+
+      const anchor = firstKey.value.clone();
+      sanitized.setKeys(keys.map((key) => ({
+        ...key,
+        value: key.value instanceof Vector3
+          ? new Vector3(anchor.x, key.value.y, anchor.z)
+          : key.value,
+        inTangent: key.inTangent instanceof Vector3
+          ? new Vector3(0, key.inTangent.y, 0)
+          : key.inTangent,
+        outTangent: key.outTangent instanceof Vector3
+          ? new Vector3(0, key.outTangent.y, 0)
+          : key.outTangent,
+      })));
+      return sanitized;
+    }
+
     function collectBones(node: TransformNode) {
       boneMap.set(node.name, node);
       for (const child of node.getChildren()) {
@@ -178,7 +207,10 @@ async function loadAnimatedCharacter(
                 ? (boneMap.get(boneName) || boneMap.get(canonicalBoneName(boneName)))
                 : null;
               if (sceneNode) {
-                clonedGroup.addTargetedAnimation(targetedAnim.animation, sceneNode);
+                clonedGroup.addTargetedAnimation(
+                  boneName ? createInPlaceAnimation(targetedAnim.animation, boneName) : targetedAnim.animation,
+                  sceneNode,
+                );
               }
             }
             clonedGroup.loopAnimation = state !== 'talk';
@@ -1545,7 +1577,12 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
           0.32,
         )
       : playerRoot.position.add(playerFocusOffset);
-    currentCameraTarget = Vector3.Lerp(currentCameraTarget, desiredCameraTarget, 1 - Math.exp(-8 * delta));
+    // Keep the exploration camera target locked to the player so the character
+    // does not "surge" toward the camera during forward motion. Only smooth
+    // the target during dialogue framing, where a soft blend is intentional.
+    currentCameraTarget = activeDialogueNpc
+      ? Vector3.Lerp(currentCameraTarget, desiredCameraTarget, 1 - Math.exp(-8 * delta))
+      : desiredCameraTarget.clone();
     renderedCameraPitch = damp(
       renderedCameraPitch,
       activeDialogueNpc ? Math.max(desiredCameraPitch, 0.5) : desiredCameraPitch,
@@ -1577,7 +1614,12 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
         false,
       );
       if (hit?.hit && typeof hit.distance === 'number') {
-        blockedDistance = Math.max(2.35, hit.distance - 0.35);
+        const obstructionDistance = Math.max(2.35, hit.distance - 0.35);
+        // Ignore tiny grazing hits so decorative geometry does not cause the
+        // camera to pulse in and out while the player is simply moving forward.
+        if (obstructionDistance < modeDistance - 0.25) {
+          blockedDistance = obstructionDistance;
+        }
       }
     }
     currentCameraDistance = damp(

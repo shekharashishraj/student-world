@@ -91,6 +91,7 @@ textarea {
 .identity-card,
 .zone-list,
 .world-help,
+.world-overlay-panel,
 .dialogue-panel,
 .hud-card,
 .zone-banner,
@@ -108,6 +109,11 @@ textarea {
 
 .nexus-shell {
   min-height: 100vh;
+}
+
+.nexus-shell.is-world {
+  height: 100svh;
+  overflow: hidden;
 }
 
 .home-screen {
@@ -135,8 +141,7 @@ textarea {
 }
 
 .hero-copy h1,
-.screen-header h2,
-.world-sidebar h2 {
+.screen-header h2 {
   margin: 0;
   font-family: var(--font-display);
   letter-spacing: 0.02em;
@@ -322,6 +327,7 @@ textarea {
 .preview-copy strong,
 .coordinate-card strong,
 .dialogue-header strong,
+.world-overlay-header strong,
 .hud-card strong,
 .zone-banner strong,
 .identity-card strong {
@@ -408,23 +414,6 @@ textarea {
   transform: none;
 }
 
-.world-shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: 340px 1fr;
-}
-
-.world-sidebar {
-  padding: 28px;
-  border-right: 1px solid var(--line);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 27, 0.94), rgba(9, 22, 32, 0.86)),
-    radial-gradient(circle at top, rgba(232, 182, 90, 0.12), transparent 42%);
-  display: grid;
-  align-content: start;
-  gap: 18px;
-}
-
 .zone-list {
   padding: 14px;
   border-radius: 22px;
@@ -436,18 +425,121 @@ textarea {
 
 .world-stage {
   position: relative;
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
 }
 
 .world-scene {
-  min-height: 100vh;
+  min-height: 100%;
+  height: 100%;
+}
+
+.world-shell {
+  position: relative;
+  height: 100svh;
+  overflow: hidden;
+}
+
+.world-utility-rail {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  z-index: 25;
+  display: grid;
+  gap: 12px;
+}
+
+.world-utility-button {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(11, 22, 34, 0.84);
+  color: var(--text-main);
+  box-shadow: var(--shadow);
+  display: grid;
+  place-items: center;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
+  backdrop-filter: blur(12px);
+}
+
+.world-utility-button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.world-utility-button:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+}
+
+.world-utility-button.is-active {
+  border-color: var(--line-strong);
+  background: rgba(232, 182, 90, 0.14);
+  color: var(--accent);
+}
+
+.world-overlay-panel {
+  position: absolute;
+  top: 24px;
+  left: 96px;
+  bottom: 24px;
+  width: min(390px, calc(100vw - 144px));
+  border-radius: 28px;
+  padding: 18px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  z-index: 30;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(8, 18, 27, 0.96), rgba(9, 22, 32, 0.9)),
+    radial-gradient(circle at top, rgba(232, 182, 90, 0.12), transparent 42%);
+}
+
+.world-overlay-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.world-overlay-header strong {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  line-height: 1.05;
+}
+
+.world-overlay-body {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
+
+.world-overlay-section,
+.world-controls-card {
+  display: grid;
+  gap: 10px;
+}
+
+.world-panel-zone-list {
+  padding: 0;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .zone-banner {
   position: absolute;
   top: 24px;
-  left: 24px;
-  max-width: 420px;
+  left: 96px;
+  max-width: min(420px, calc(100vw - 560px));
+  z-index: 20;
 }
 
 .hud-card {
@@ -455,6 +547,7 @@ textarea {
   top: 24px;
   right: 24px;
   max-width: 340px;
+  z-index: 20;
 }
 
 .interact-prompt {
@@ -462,12 +555,14 @@ textarea {
   left: 50%;
   bottom: 28px;
   transform: translateX(-50%);
+  max-width: calc(100vw - 48px);
   border-radius: 999px;
   padding: 14px 22px;
   border: 1px solid var(--line-strong);
   background: rgba(10, 18, 29, 0.88);
   color: var(--text-main);
   box-shadow: var(--shadow);
+  z-index: 20;
 }
 
 .dialogue-panel {
@@ -475,10 +570,12 @@ textarea {
   right: 24px;
   bottom: 24px;
   width: min(460px, calc(100vw - 48px));
+  max-height: calc(100svh - 48px);
   border-radius: 28px;
   padding: 18px;
   display: grid;
   gap: 14px;
+  z-index: 40;
 }
 
 .dialogue-header,
@@ -535,19 +632,18 @@ textarea {
   background: rgba(69, 24, 23, 0.92);
   color: #ffd1c8;
   box-shadow: var(--shadow);
+  z-index: 50;
 }
 
 @media (max-width: 1100px) {
   .hero-panel,
   .avatar-layout,
-  .globe-layout,
-  .world-shell {
+  .globe-layout {
     grid-template-columns: 1fr;
   }
 
-  .world-sidebar {
-    border-right: none;
-    border-bottom: 1px solid var(--line);
+  .world-overlay-panel {
+    width: min(360px, calc(100vw - 132px));
   }
 
   .dialogue-panel {
@@ -566,8 +662,7 @@ textarea {
   .catalog-panel,
   .preview-panel,
   .search-panel,
-  .globe-panel,
-  .world-sidebar {
+  .globe-panel {
     padding: 18px;
   }
 
@@ -584,14 +679,57 @@ textarea {
     justify-content: stretch;
   }
 
-  .zone-banner,
+  .world-utility-rail {
+    top: 16px;
+    left: 16px;
+    gap: 10px;
+  }
+
+  .world-utility-button {
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+  }
+
+  .world-overlay-panel {
+    inset: 0;
+    width: auto;
+    border-radius: 0;
+    padding: 16px;
+  }
+
+  .world-overlay-body {
+    padding-right: 0;
+  }
+
+  .zone-banner {
+    top: 96px;
+    left: 16px;
+    right: 16px;
+    max-width: none;
+  }
+
   .hud-card {
-    position: static;
-    margin: 16px;
+    top: 16px;
+    left: 84px;
+    right: 16px;
+    max-width: none;
   }
 
   .interact-prompt {
     bottom: 16px;
-    width: calc(100% - 32px);
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-width: none;
+    transform: none;
+  }
+
+  .dialogue-panel {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    width: auto;
+    max-height: calc(100svh - 132px);
   }
 }

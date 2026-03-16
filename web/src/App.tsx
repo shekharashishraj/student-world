@@ -14,6 +14,7 @@ import type { Avatar, DialogueMessage, GeocodeResponse, ProfileResponse } from '
 import './styles.css';
 
 type Screen = 'home' | 'avatar' | 'globe' | 'world';
+type WorldOverlayPanel = 'guide' | 'controls';
 
 const HUB_AREA = {
   label: 'NEXUS Plaza',
@@ -100,6 +101,29 @@ function WorldCanvas({
   return <canvas className="scene-canvas world-scene" ref={canvasRef} />;
 }
 
+function GuideIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+      <path
+        d="M6 5.75A2.75 2.75 0 0 1 8.75 3h9.5A1.75 1.75 0 0 1 20 4.75v13.5A1.75 1.75 0 0 1 18.25 20h-9.5A2.75 2.75 0 0 0 6 22.75V5.75Zm0 0A2.75 2.75 0 0 0 3.25 3H5.5A.5.5 0 0 1 6 3.5v2.25Zm4.25 1.5h5.5m-5.5 4h5.5m-5.5 4h3.25"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.7"
+      />
+    </svg>
+  );
+}
+
+function ControlsIcon() {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
+      <rect height="13" rx="3" stroke="currentColor" strokeWidth="1.7" width="18" x="3" y="5.5" />
+      <path d="M8 10v4m-2-2h4m5-1.5h.01m2.49 3h.01" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
 export default function App() {
   const [avatars, setAvatars] = useState<Avatar[]>([]);
   const [profileResponse, setProfileResponse] = useState<ProfileResponse | null>(null);
@@ -116,6 +140,7 @@ export default function App() {
   const [zoneBanner, setZoneBanner] = useState<string>('NEXUS Plaza');
   const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
+  const [activeWorldPanel, setActiveWorldPanel] = useState<WorldOverlayPanel | null>(null);
   const [conversations, setConversations] = useState<Record<string, DialogueMessage[]>>({});
   const [draftMessage, setDraftMessage] = useState('');
 
@@ -194,14 +219,24 @@ export default function App() {
         return;
       }
 
-      if ((event.key === 'e' || event.key === 'E') && activeNpcId && !dialogueNpcId) {
+      if (event.key === 'Escape' && activeWorldPanel) {
+        setActiveWorldPanel(null);
+        return;
+      }
+
+      if ((event.key === 'e' || event.key === 'E') && activeNpcId && !dialogueNpcId && !activeWorldPanel) {
         openDialogue(activeNpcId);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeNpcId, currentScreen, dialogueNpcId]);
+  }, [activeNpcId, activeWorldPanel, currentScreen, dialogueNpcId]);
+
+  useEffect(() => {
+    if (currentScreen === 'world') return;
+    setActiveWorldPanel(null);
+  }, [currentScreen]);
 
   async function refreshAppState() {
     try {
@@ -293,6 +328,7 @@ export default function App() {
     const npc = NPCS.find((entry) => entry.id === npcId);
     if (!npc) return;
 
+    setActiveWorldPanel(null);
     setDialogueNpcId(npcId);
     setDraftMessage('');
     setConversations((current) => {
@@ -355,7 +391,7 @@ export default function App() {
   }
 
   return (
-    <div className="nexus-shell">
+    <div className={`nexus-shell ${currentScreen === 'world' ? 'is-world' : ''}`}>
       {currentScreen === 'home' ? (
         <main className="home-screen">
           <section className="hero-panel">
@@ -525,46 +561,6 @@ export default function App() {
 
       {currentScreen === 'world' ? (
         <main className="world-shell">
-          <aside className="world-sidebar">
-            <p className="eyebrow">NEXUS Plaza</p>
-            <h2>Leadership Frontier</h2>
-            <p className="world-copy">
-              A compact seven-zone prototype. Every district maps to a course concept, and the world gently points you first toward Leadership Hall and Vision Tower.
-            </p>
-
-            <div className="identity-card">
-              <div>
-                <span className="label">Player</span>
-                <strong>{profileResponse.user.displayName}</strong>
-              </div>
-              <div>
-                <span className="label">Archetype</span>
-                <strong>{ARCHETYPES.find((item) => item.id === profileResponse.profile.archetype)?.label || 'Not selected'}</strong>
-              </div>
-              <div>
-                <span className="label">Origin</span>
-                <strong>{profileResponse.profile.locationLabel || profileResponse.profile.country || 'Unpinned'}</strong>
-              </div>
-            </div>
-
-            <div className="zone-list">
-              {recommendedZones.map((zone) => (
-                <div key={zone.id} className={`zone-list-item ${activeZoneId === zone.id ? 'is-active' : ''}`}>
-                  <strong>{zone.label}</strong>
-                  <small>{zone.interactionHook}</small>
-                </div>
-              ))}
-            </div>
-
-            <div className="world-help">
-              <strong>Controls</strong>
-              <p>
-                <code>WASD</code> to move, <code>Shift</code> to sprint, <code>E</code> near an NPC to speak, and <code>Esc</code> to
-                close dialogue.
-              </p>
-            </div>
-          </aside>
-
           <section className="world-stage">
             <WorldCanvas
               avatar={profileResponse.profile.avatar}
@@ -572,6 +568,104 @@ export default function App() {
               onInteractableChange={setActiveNpcId}
               onZoneChange={setActiveZoneId}
             />
+
+            <div className="world-utility-rail">
+              <button
+                aria-controls="world-guide-panel"
+                aria-expanded={activeWorldPanel === 'guide'}
+                aria-label="Open world guide"
+                className={`world-utility-button ${activeWorldPanel === 'guide' ? 'is-active' : ''}`}
+                onClick={() => setActiveWorldPanel((current) => (current === 'guide' ? null : 'guide'))}
+                title="Guide"
+                type="button"
+              >
+                <GuideIcon />
+              </button>
+              <button
+                aria-controls="world-controls-panel"
+                aria-expanded={activeWorldPanel === 'controls'}
+                aria-label="Open controls"
+                className={`world-utility-button ${activeWorldPanel === 'controls' ? 'is-active' : ''}`}
+                onClick={() => setActiveWorldPanel((current) => (current === 'controls' ? null : 'controls'))}
+                title="Controls"
+                type="button"
+              >
+                <ControlsIcon />
+              </button>
+            </div>
+
+            {activeWorldPanel ? (
+              <aside
+                className={`world-overlay-panel ${activeWorldPanel === 'guide' ? 'is-guide' : 'is-controls'}`}
+                id={activeWorldPanel === 'guide' ? 'world-guide-panel' : 'world-controls-panel'}
+              >
+                <div className="world-overlay-header">
+                  <div>
+                    <span className="label">{activeWorldPanel === 'guide' ? 'World Guide' : 'Controls'}</span>
+                    <strong>{activeWorldPanel === 'guide' ? 'Leadership Frontier' : 'How to Move Through NEXUS'}</strong>
+                  </div>
+                  <button className="ghost-button" onClick={() => setActiveWorldPanel(null)} type="button">
+                    Close
+                  </button>
+                </div>
+
+                <div className="world-overlay-body">
+                  {activeWorldPanel === 'guide' ? (
+                    <>
+                      <p className="world-copy">
+                        A compact seven-zone prototype. Every district maps to a course concept, and the world gently points you first toward
+                        Leadership Hall and Vision Tower.
+                      </p>
+
+                      <div className="identity-card">
+                        <div>
+                          <span className="label">Player</span>
+                          <strong>{profileResponse.user.displayName}</strong>
+                        </div>
+                        <div>
+                          <span className="label">Archetype</span>
+                          <strong>{ARCHETYPES.find((item) => item.id === profileResponse.profile.archetype)?.label || 'Not selected'}</strong>
+                        </div>
+                        <div>
+                          <span className="label">Origin</span>
+                          <strong>{profileResponse.profile.locationLabel || profileResponse.profile.country || 'Unpinned'}</strong>
+                        </div>
+                      </div>
+
+                      <div className="world-overlay-section world-help">
+                        <span className="label">What you can do here</span>
+                        <strong>Explore, approach, and ask questions.</strong>
+                        <p className="world-copy">
+                          Walk the hub, follow the radiant paths into each district, and speak with mentor NPCs to learn how leadership ideas
+                          show up in the world.
+                        </p>
+                      </div>
+
+                      <div className="zone-list world-panel-zone-list">
+                        {recommendedZones.map((zone) => (
+                          <div key={zone.id} className={`zone-list-item ${activeZoneId === zone.id ? 'is-active' : ''}`}>
+                            <strong>{zone.label}</strong>
+                            <small>{zone.interactionHook}</small>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="world-help world-controls-card">
+                      <span className="label">Controls</span>
+                      <strong>Stay focused on the world.</strong>
+                      <p className="world-copy">
+                        <code>WASD</code> moves, <code>Shift</code> sprints, <code>E</code> speaks with nearby mentors, and <code>Esc</code>{' '}
+                        closes dialogue or HUD panels.
+                      </p>
+                      <p className="world-copy">
+                        Follow the glowing paths to reach each zone, then stop near an NPC when you want to ask questions about that district.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            ) : null}
 
             {zoneBanner ? (
               <div className="zone-banner">
@@ -587,7 +681,7 @@ export default function App() {
               <small>{currentArea.interactionHook}</small>
             </div>
 
-            {activeNpcId && !dialogueNpcId ? (
+            {activeNpcId && !dialogueNpcId && !activeWorldPanel ? (
               <button className="interact-prompt" onClick={() => openDialogue(activeNpcId)} type="button">
                 <span className="label">Nearby mentor</span>
                 <strong>Press E to speak with {NPCS.find((npc) => npc.id === activeNpcId)?.name}</strong>
