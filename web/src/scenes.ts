@@ -87,39 +87,9 @@ async function loadAnimatedCharacter(
       (importedMeshRoot as TransformNode).rotation.y = Math.PI;
     }
 
-    // Hide sub-meshes that drifted far from the body.
-    // The aggressive mesh simplification (90% reduction) can corrupt bone
-    // weights on small accessory parts (goggles, belt, staff), causing them
-    // to float away from the skeleton. Detect and hide them.
-    if (importedMeshRoot) {
-      const allChildMeshes = (importedMeshRoot as TransformNode).getChildMeshes();
-      // Compute the overall bounding center
-      let totalCenterY = 0;
-      let counted = 0;
-      allChildMeshes.forEach((mesh) => {
-        mesh.computeWorldMatrix(true);
-        const bb = mesh.getBoundingInfo().boundingBox;
-        if (bb.maximumWorld.y - bb.minimumWorld.y > 0.01) {
-          totalCenterY += bb.centerWorld.y;
-          counted++;
-        }
-      });
-      const avgCenterY = counted > 0 ? totalCenterY / counted : 1.5;
-      // Character should be roughly 0–3 units tall. Hide any sub-mesh whose
-      // center is more than ~3 units above the average or below the ground.
-      const upperThreshold = avgCenterY + 3.5;
-      const lowerThreshold = -1.5;
-      allChildMeshes.forEach((mesh) => {
-        const bb = mesh.getBoundingInfo().boundingBox;
-        const cy = bb.centerWorld.y;
-        if (cy > upperThreshold || cy < lowerThreshold) {
-          mesh.isVisible = false;
-        }
-      });
-    }
-
     // Stop any embedded animation that came with character.glb
     container.animationGroups.forEach((group) => group.stop());
+
 
     // Build a map of bone name → node from the loaded character's skeleton.
     //
@@ -1431,7 +1401,9 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
 
     const physPos = playerCapsule.getAbsolutePosition();
     playerRoot.position.x = physPos.x;
-    playerRoot.position.y = physPos.y - (capsuleHeight + 2 * capsuleRadius) / 2;
+    // Place the player root at the visual terrain surface so the character
+    // walks on the actual rendered ground, not the flat physics floor.
+    playerRoot.position.y = terrainHeight(physPos.x, physPos.z);
     playerRoot.position.z = physPos.z;
 
     if (physPos.y < -10) {
@@ -1496,7 +1468,11 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
     const bob = moving
       ? Math.sin(time * (actualHorizontalSpeed > 6.2 ? 10 : 7)) * (actualHorizontalSpeed > 6.2 ? 0.12 : 0.06)
       : Math.sin(time * 1.8) * 0.02;
-    playerVisual.position.y = bob;
+    // Anim-pose lift: fitImportedAvatar measures the bind-pose bounding box,
+    // but the idle/walk animations lower the hips from the T-pose.  This
+    // constant lifts the visual so the feet sit on the terrain surface.
+    const animPoseLift = 0.55;
+    playerVisual.position.y = bob + animPoseLift;
 
     hub.crystal.rotation.y += 0.008;
     hub.ring.rotation.y += 0.003;
