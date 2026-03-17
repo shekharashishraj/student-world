@@ -137,7 +137,7 @@ export default function App() {
   const [selectedPin, setSelectedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [geocodeResult, setGeocodeResult] = useState<GeocodeResponse | null>(null);
   const [activeZoneId, setActiveZoneId] = useState<string>('nexus-plaza');
-  const [zoneBanner, setZoneBanner] = useState<string>('NEXUS Plaza');
+  const [enteringWorld, setEnteringWorld] = useState<string | null>(null);
   const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
   const [activeWorldPanel, setActiveWorldPanel] = useState<WorldOverlayPanel | null>(null);
@@ -202,13 +202,14 @@ export default function App() {
     }
   }, [avatars, profileResponse]);
 
-  useEffect(() => {
-    setZoneBanner(currentArea.label);
-    const timer = window.setTimeout(() => {
-      setZoneBanner((current) => (current === currentArea.label ? '' : current));
-    }, 2600);
-    return () => window.clearTimeout(timer);
-  }, [currentArea]);
+  const enterWorld = (zoneId: string) => {
+    const zone = ZONES.find((z) => z.id === zoneId);
+    if (!zone) return;
+    setEnteringWorld(zoneId);
+    // Placeholder — will load the inner world scene when built
+    console.log(`Entering world: ${zone.label}`);
+    setTimeout(() => setEnteringWorld(null), 2400);
+  };
 
   useEffect(() => {
     if (currentScreen !== 'world') return undefined;
@@ -227,11 +228,15 @@ export default function App() {
       if ((event.key === 'e' || event.key === 'E') && activeNpcId && !dialogueNpcId && !activeWorldPanel) {
         openDialogue(activeNpcId);
       }
+
+      if ((event.key === 'f' || event.key === 'F') && !event.repeat && activeZoneId !== 'nexus-plaza' && !dialogueNpcId && !activeWorldPanel && !enteringWorld) {
+        enterWorld(activeZoneId);
+      }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeNpcId, activeWorldPanel, currentScreen, dialogueNpcId]);
+  }, [activeNpcId, activeWorldPanel, activeZoneId, currentScreen, dialogueNpcId, enteringWorld]);
 
   useEffect(() => {
     if (currentScreen === 'world') return;
@@ -393,25 +398,51 @@ export default function App() {
   return (
     <div className={`nexus-shell ${currentScreen === 'world' ? 'is-world' : ''}`}>
       {currentScreen === 'home' ? (
-        <main className="home-screen">
-          <section className="hero-panel">
-            <div className="hero-copy">
-              <p className="eyebrow">ASU CISA • OGL 200</p>
-              <h1>NEXUS: Leadership Frontier</h1>
-              <p className="hero-lead">
-                A prototype open world where organizational leadership becomes a place to explore, question, and inhabit.
-              </p>
-              <div className="hero-actions">
-                <button className="primary-button" onClick={() => setHasBegun(true)} type="button">
-                  {profileResponse.onboarding.complete ? 'Resume World' : 'Begin Journey'}
-                </button>
-                <span className="hero-hint">Single-player prototype • Academic fantasy world • AI NPC mentors</span>
-              </div>
-            </div>
-            <div className="hero-scene">
-              <SceneCanvas sceneKey="home-scene" loadScene={homeSceneFactory} />
-            </div>
-          </section>
+        <main className="home-screen cinematic">
+          {/* Full-bleed 3D scene background */}
+          <div className="hero-scene-bg">
+            <SceneCanvas sceneKey="home-scene" loadScene={homeSceneFactory} />
+          </div>
+
+          {/* Dark vignette + gradient overlays */}
+          <div className="hero-vignette" />
+          <div className="hero-letterbox hero-letterbox--top" />
+          <div className="hero-letterbox hero-letterbox--bottom" />
+
+          {/* Floating dust particles */}
+          <div className="hero-particles">
+            {Array.from({ length: 18 }).map((_, i) => (
+              <span key={i} className="hero-particle" style={{
+                left: `${6 + (i * 37 + 13) % 88}%`,
+                top: `${10 + (i * 53 + 7) % 75}%`,
+                animationDelay: `${(i * 1.3) % 8}s`,
+                animationDuration: `${6 + (i % 5) * 2}s`,
+                opacity: 0.15 + (i % 4) * 0.1,
+                width: `${2 + (i % 3)}px`,
+                height: `${2 + (i % 3)}px`,
+              } as React.CSSProperties} />
+            ))}
+          </div>
+
+          {/* Title + menu — centered overlay */}
+          <div className="hero-overlay">
+            <p className="hero-eyebrow anim-fade-in">ASU CISA &bull; OGL 200</p>
+            <h1 className="hero-title">
+              <span className="hero-title-main anim-slide-left">NEXUS</span>
+              <span className="hero-title-sub anim-slide-right">Leadership Frontier</span>
+            </h1>
+            <nav className="hero-menu anim-menu-in">
+              <button className="hero-menu-item" onClick={() => setHasBegun(true)} type="button">
+                {profileResponse.onboarding.complete ? 'Resume World' : 'Start Game'}
+              </button>
+              <button className="hero-menu-item" onClick={() => setActiveWorldPanel('controls')} type="button">
+                Controls
+              </button>
+            </nav>
+            <p className="hero-tagline anim-fade-in-late">
+              Single-player prototype &bull; Academic fantasy world &bull; AI NPC mentors
+            </p>
+          </div>
         </main>
       ) : null}
 
@@ -655,7 +686,7 @@ export default function App() {
                       <span className="label">Controls</span>
                       <strong>Stay focused on the world.</strong>
                       <p className="world-copy">
-                        <code>WASD</code> moves, <code>Shift</code> sprints, <code>E</code> speaks with nearby mentors, and <code>Esc</code>{' '}
+                        <code>WASD</code> moves, <code>Shift</code> sprints, <code>E</code> speaks with nearby mentors, <code>F</code> enters a world zone, and <code>Esc</code>{' '}
                         closes dialogue or HUD panels.
                       </p>
                       <p className="world-copy">
@@ -667,19 +698,27 @@ export default function App() {
               </aside>
             ) : null}
 
-            {zoneBanner ? (
-              <div className="zone-banner">
-                <span className="label">{currentArea.moduleTitle}</span>
-                <strong>{zoneBanner}</strong>
-                <small>{currentArea.intro}</small>
+            <div className="hud-card">
+              <span className="label">{currentArea.moduleTitle}</span>
+              <strong>{currentArea.label}</strong>
+              <small>{currentArea.intro}</small>
+              {activeZoneId !== 'nexus-plaza' && !dialogueNpcId && !enteringWorld && (
+                <div className="enter-prompt">
+                  <kbd>F</kbd> Enter this world
+                </div>
+              )}
+            </div>
+
+            {enteringWorld ? (
+              <div className="world-transition-overlay">
+                <div className="world-transition-card">
+                  <span className="label">Entering</span>
+                  <strong>{ZONES.find((z) => z.id === enteringWorld)?.label}</strong>
+                  <div className="world-transition-bar" />
+                  <small>Preparing world — coming soon</small>
+                </div>
               </div>
             ) : null}
-
-            <div className="hud-card">
-              <span className="label">Current zone</span>
-              <strong>{currentArea.label}</strong>
-              <small>{currentArea.interactionHook}</small>
-            </div>
 
             {activeNpcId && !dialogueNpcId && !activeWorldPanel ? (
               <button className="interact-prompt" onClick={() => openDialogue(activeNpcId)} type="button">

@@ -20,6 +20,7 @@ import {
   SceneLoader,
   ShadowGenerator,
   StandardMaterial,
+  Texture,
   TransformNode,
   Vector3,
   VertexBuffer,
@@ -558,17 +559,18 @@ function createSkyDome(scene: Scene, color = '#0b1624') {
  *  Falls back to a simple emissive sky sphere on Safari where the SkyMaterial
  *  shader can fail to compile. */
 function createWorldSky(scene: Scene) {
-  // Fog — matches sky horizon for atmospheric depth (works on all browsers)
+  // Light fog — just enough to soften distant ground edges, but thin enough
+  // to let the sky, clouds, and mountains show through clearly
   scene.fogMode = Scene.FOGMODE_EXP2;
-  scene.fogDensity = 0.007;
-  scene.fogColor = new Color3(0.68, 0.78, 0.62);
+  scene.fogDensity = 0.004;
+  scene.fogColor = new Color3(0.82, 0.88, 0.95);
+  scene.clearColor = new Color4(0.82, 0.88, 0.95, 1);
 
   if (isSafari) {
-    // Safari fallback: simple gradient sky dome
     const sky = MeshBuilder.CreateSphere('world-sky-fallback', { diameter: 800, sideOrientation: Mesh.BACKSIDE, segments: 16 }, scene);
     const mat = new StandardMaterial('world-sky-fallback-mat', scene);
     mat.disableLighting = true;
-    mat.emissiveColor = new Color3(0.55, 0.7, 0.55); // warm green-tinted horizon
+    mat.emissiveColor = new Color3(0.62, 0.76, 0.90);
     sky.material = mat;
     sky.infiniteDistance = true;
     return sky;
@@ -577,10 +579,10 @@ function createWorldSky(scene: Scene) {
   const skyMat = new SkyMaterial('world-sky-material', scene);
   skyMat.backFaceCulling = false;
   skyMat.luminance = 0.35;
-  skyMat.turbidity = 8;
-  skyMat.rayleigh = 1.5;
+  skyMat.turbidity = 4;
+  skyMat.rayleigh = 2.5;
   skyMat.mieCoefficient = 0.005;
-  skyMat.mieDirectionalG = 0.8;
+  skyMat.mieDirectionalG = 0.80;
   skyMat.inclination = 0.48;
   skyMat.azimuth = 0.25;
 
@@ -588,7 +590,126 @@ function createWorldSky(scene: Scene) {
   skybox.material = skyMat;
   skybox.infiniteDistance = true;
 
+  // --- Procedural clouds: billboard planes with canvas-generated texture ---
+  const cloudCanvas = document.createElement('canvas');
+  cloudCanvas.width = 256;
+  cloudCanvas.height = 256;
+  const ctx = cloudCanvas.getContext('2d')!;
+  // Draw a soft, fluffy cloud blob using layered radial gradients
+  ctx.clearRect(0, 0, 256, 256);
+  const drawBlob = (cx: number, cy: number, r: number, alpha: number) => {
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+    grad.addColorStop(0.5, `rgba(255,255,255,${alpha * 0.5})`);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  };
+  drawBlob(128, 128, 110, 0.7);
+  drawBlob(90, 120, 80, 0.55);
+  drawBlob(170, 115, 75, 0.5);
+  drawBlob(120, 90, 65, 0.45);
+  drawBlob(140, 150, 70, 0.4);
+
+  const cloudDataUrl = cloudCanvas.toDataURL('image/png');
+  const cloudTex = new Texture(cloudDataUrl, scene, false, true, Texture.BILINEAR_SAMPLINGMODE);
+  cloudTex.hasAlpha = true;
+
+  const cloudMat = new StandardMaterial('cloud-mat', scene);
+  cloudMat.diffuseTexture = cloudTex;
+  cloudMat.opacityTexture = cloudTex;
+  cloudMat.emissiveColor = new Color3(1, 1, 1);
+  cloudMat.disableLighting = true;
+  cloudMat.backFaceCulling = false;
+  cloudMat.alpha = 0.8;
+
+  const cloudRand = seededRandom(777);
+  const CLOUD_COUNT = 22;
+
+  for (let i = 0; i < CLOUD_COUNT; i++) {
+    const plane = MeshBuilder.CreatePlane(`cloud-${i}`, {
+      width: 25 + cloudRand() * 30,
+      height: 10 + cloudRand() * 12,
+    }, scene);
+    plane.material = cloudMat;
+    plane.billboardMode = Mesh.BILLBOARDMODE_Y;
+    plane.position.x = (cloudRand() - 0.5) * 250;
+    plane.position.z = (cloudRand() - 0.5) * 250;
+    plane.position.y = 38 + cloudRand() * 22;
+    plane.isPickable = false;
+    plane.freezeWorldMatrix();
+  }
+
+  // --- Distant mountain silhouette ring ---
+  createMountainRing(scene);
+
   return skybox;
+}
+
+/** Procedural mountain ring at the horizon — low-poly silhouette */
+function createMountainRing(scene: Scene) {
+  const RADIUS = 130;
+  const SEGMENTS = 120;
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const colors: number[] = [];
+  const mountainRand = seededRandom(314);
+
+  // Two rings of vertices: bottom (y=0) and top (displaced y = mountain height)
+  for (let i = 0; i <= SEGMENTS; i++) {
+    const angle = (i / SEGMENTS) * Math.PI * 2;
+    const x = Math.cos(angle) * RADIUS;
+    const z = Math.sin(angle) * RADIUS;
+
+    // Bottom vertex — at ground level
+    positions.push(x, -2, z);
+    colors.push(0.22, 0.28, 0.35, 1);
+
+    // Top vertex — displaced for mountain peaks
+    const peak =
+      Math.sin(angle * 3.0) * 6 +
+      Math.sin(angle * 7.0 + 1.3) * 3.5 +
+      Math.sin(angle * 13.0 + 4.1) * 1.8 +
+      mountainRand() * 2.5;
+    const height = Math.max(3, 10 + peak);
+    positions.push(x, height, z);
+    // Peaks are slightly lighter to give a sense of depth
+    const brightness = 0.25 + (height / 22) * 0.15;
+    colors.push(brightness, brightness + 0.04, brightness + 0.1, 1);
+  }
+
+  // Build triangles between bottom and top rings
+  for (let i = 0; i < SEGMENTS; i++) {
+    const bl = i * 2;
+    const tl = i * 2 + 1;
+    const br = (i + 1) * 2;
+    const tr = (i + 1) * 2 + 1;
+    indices.push(bl, br, tl);
+    indices.push(tl, br, tr);
+  }
+
+  const normals: number[] = [];
+  VertexData.ComputeNormals(positions, indices, normals);
+
+  const vertexData = new VertexData();
+  vertexData.positions = positions;
+  vertexData.indices = indices;
+  vertexData.normals = normals;
+  vertexData.colors = colors;
+
+  const mountains = new Mesh('mountain-ring', scene);
+  vertexData.applyToMesh(mountains);
+
+  const mat = new StandardMaterial('mountain-mat', scene);
+  mat.diffuseColor = new Color3(0.18, 0.24, 0.32);
+  mat.specularColor = new Color3(0, 0, 0);
+  mat.emissiveColor = new Color3(0.06, 0.08, 0.12);
+  mat.backFaceCulling = false;
+  mountains.material = mat;
+  mountains.isPickable = false;
+  mountains.freezeWorldMatrix();
+
+  return mountains;
 }
 
 /** Simple seeded pseudo-random for deterministic scatter */
@@ -617,13 +738,15 @@ function terrainNoiseRaw(x: number, z: number): number {
 function terrainHeight(x: number, z: number): number {
   const distFromCenter = Math.sqrt(x * x + z * z);
   const centerFlatten = Math.max(0, 1 - distFromCenter / 10);
-  const edgeFade = Math.min(1, distFromCenter / 38);
-  return terrainNoiseRaw(x, z) * (1 - centerFlatten) * edgeFade;
+  // Hills peak around the playable zone, then flatten toward horizon
+  const riseZone = Math.min(1, distFromCenter / 40);
+  const outerFade = Math.max(0, 1 - Math.max(0, (distFromCenter - 50)) / 100);
+  return terrainNoiseRaw(x, z) * (1 - centerFlatten) * riseZone * outerFade;
 }
 
-/** Green terrain ground with vertex displacement and vertex colors */
-function createWorldGround(scene: Scene, size = 90) {
-  const subdivisions = 64;
+/** Terrain ground with vertex displacement, vertex colors, and horizon fade */
+function createWorldGround(scene: Scene, size = 220) {
+  const subdivisions = 96;
   const ground = MeshBuilder.CreateGround('world-ground', {
     width: size,
     height: size,
@@ -646,14 +769,20 @@ function createWorldGround(scene: Scene, size = 90) {
     const h = terrainHeight(x, z);
     positions[i * 3 + 1] = h;
     const distFromCenter = Math.sqrt(x * x + z * z);
-    const edgeFade = Math.min(1, distFromCenter / 38);
 
-    // Vertex colors: green base, brownish on higher spots, darker at edges
+    // Vertex colors: green base, brownish on higher spots
     const greenBase = 0.28 + Math.random() * 0.08;
     const slope = Math.abs(h) / 0.8;
-    const r = 0.18 + slope * 0.25 + edgeFade * 0.06;
-    const g = greenBase + (1 - slope) * 0.15 - edgeFade * 0.05;
-    const b = 0.08 + (1 - edgeFade) * 0.06;
+    let r = 0.18 + slope * 0.25;
+    let g = greenBase + (1 - slope) * 0.15;
+    let b = 0.08 + 0.06;
+
+    // Outer fade: blend vertex color toward fog color (0.82, 0.88, 0.95)
+    // so the ground dissolves seamlessly into the sky at the horizon
+    const fogBlend = Math.min(1, Math.max(0, (distFromCenter - 50)) / 70);
+    r = r + (0.82 - r) * fogBlend;
+    g = g + (0.88 - g) * fogBlend;
+    b = b + (0.95 - b) * fogBlend;
     colors.push(r, g, b, 1);
   }
 
@@ -1204,7 +1333,7 @@ export function createGlobeScene(
 export async function createWorldScene(canvas: HTMLCanvasElement, options: WorldSceneOptions): Promise<WorldSceneController> {
   const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
   const scene = new Scene(engine);
-  scene.clearColor = new Color4(0.42, 0.58, 0.45, 1);
+  scene.clearColor = new Color4(0.82, 0.88, 0.95, 1);
 
   // Initialize Havok physics engine
   const havokInterface = await HavokPhysics({
@@ -1216,10 +1345,10 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
   // Immersive world setup
   const { shadowGen } = createWorldLighting(scene);
   createWorldSky(scene);
-  const worldGround = createWorldGround(scene, 90);
+  const worldGround = createWorldGround(scene, 350);
   // Use a flat invisible box as the physics floor — the MESH shape on the
   // vertex-displaced terrain can fail with Havok capsule collision.
-  const physicsFloor = MeshBuilder.CreateBox('physics-floor', { width: 90, height: 0.2, depth: 90 }, scene);
+  const physicsFloor = MeshBuilder.CreateBox('physics-floor', { width: 350, height: 0.2, depth: 350 }, scene);
   physicsFloor.position.y = -0.1; // top surface at y=0
   physicsFloor.isVisible = false;
   new PhysicsAggregate(physicsFloor, PhysicsShapeType.BOX, { mass: 0, restitution: 0.1 }, scene);
