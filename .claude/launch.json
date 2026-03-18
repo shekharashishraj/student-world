@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "student-world",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "web:dev"],
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--config", "web/vite.config.ts"],
       "port": 5173
     }
   ]

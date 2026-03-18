@@ -141,6 +141,7 @@ export default function App() {
   const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
   const [activeWorldPanel, setActiveWorldPanel] = useState<WorldOverlayPanel | null>(null);
+  const [showHomeControls, setShowHomeControls] = useState(false);
   const [conversations, setConversations] = useState<Record<string, DialogueMessage[]>>({});
   const [draftMessage, setDraftMessage] = useState('');
 
@@ -210,6 +211,14 @@ export default function App() {
     console.log(`Entering world: ${zone.label}`);
     setTimeout(() => setEnteringWorld(null), 2400);
   };
+
+  // Close home controls panel on ESC
+  useEffect(() => {
+    if (currentScreen !== 'home' || !showHomeControls) return undefined;
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowHomeControls(false); };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [currentScreen, showHomeControls]);
 
   useEffect(() => {
     if (currentScreen !== 'world') return undefined;
@@ -435,7 +444,7 @@ export default function App() {
               <button className="hero-menu-item" onClick={() => setHasBegun(true)} type="button">
                 {profileResponse.onboarding.complete ? 'Resume World' : 'Start Game'}
               </button>
-              <button className="hero-menu-item" onClick={() => setActiveWorldPanel('controls')} type="button">
+              <button className="hero-menu-item" onClick={() => setShowHomeControls(true)} type="button">
                 Controls
               </button>
             </nav>
@@ -443,6 +452,36 @@ export default function App() {
               Single-player prototype &bull; Academic fantasy world &bull; AI NPC mentors
             </p>
           </div>
+
+          {/* Controls overlay panel */}
+          {showHomeControls && (
+            <>
+              <div className="home-controls-backdrop" onClick={() => setShowHomeControls(false)} />
+              <div className="home-controls-panel">
+                <div className="home-controls-header">
+                  <h2>Controls</h2>
+                  <button className="home-controls-close" onClick={() => setShowHomeControls(false)} type="button">
+                    &times;
+                  </button>
+                </div>
+                <table className="home-controls-table">
+                  <tbody>
+                    <tr><td><kbd>W</kbd></td><td>Move Forward</td></tr>
+                    <tr><td><kbd>A</kbd></td><td>Move Left</td></tr>
+                    <tr><td><kbd>S</kbd></td><td>Move Backward</td></tr>
+                    <tr><td><kbd>D</kbd></td><td>Move Right</td></tr>
+                    <tr><td><kbd>WASD</kbd> + <kbd>Shift</kbd></td><td>Sprint</td></tr>
+                    <tr><td><kbd>E</kbd></td><td>Talk to NPC</td></tr>
+                    <tr><td><kbd>F</kbd></td><td>Enter Zone World</td></tr>
+                    <tr><td><kbd>Mouse</kbd></td><td>Look Around / Rotate Camera</td></tr>
+                    <tr><td><kbd>Scroll</kbd></td><td>Zoom In / Out</td></tr>
+                    <tr><td><kbd>Esc</kbd></td><td>Close Dialogue / Panels</td></tr>
+                  </tbody>
+                </table>
+                <p className="home-controls-hint">Press <kbd>Esc</kbd> to close</p>
+              </div>
+            </>
+          )}
         </main>
       ) : null}
 

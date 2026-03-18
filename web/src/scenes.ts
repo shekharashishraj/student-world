@@ -21,6 +21,7 @@ import {
   ShadowGenerator,
   StandardMaterial,
   Texture,
+  Matrix,
   TransformNode,
   Vector3,
   VertexBuffer,
@@ -559,18 +560,17 @@ function createSkyDome(scene: Scene, color = '#0b1624') {
  *  Falls back to a simple emissive sky sphere on Safari where the SkyMaterial
  *  shader can fail to compile. */
 function createWorldSky(scene: Scene) {
-  // Light fog — just enough to soften distant ground edges, but thin enough
-  // to let the sky, clouds, and mountains show through clearly
+  // Light fog — soft atmospheric haze blending into the bright sky
   scene.fogMode = Scene.FOGMODE_EXP2;
-  scene.fogDensity = 0.004;
-  scene.fogColor = new Color3(0.82, 0.88, 0.95);
-  scene.clearColor = new Color4(0.82, 0.88, 0.95, 1);
+  scene.fogDensity = 0.003;
+  scene.fogColor = new Color3(0.68, 0.82, 0.95);
+  scene.clearColor = new Color4(0.35, 0.65, 0.95, 1);
 
   if (isSafari) {
     const sky = MeshBuilder.CreateSphere('world-sky-fallback', { diameter: 800, sideOrientation: Mesh.BACKSIDE, segments: 16 }, scene);
     const mat = new StandardMaterial('world-sky-fallback-mat', scene);
     mat.disableLighting = true;
-    mat.emissiveColor = new Color3(0.62, 0.76, 0.90);
+    mat.emissiveColor = new Color3(0.35, 0.65, 0.95);
     sky.material = mat;
     sky.infiniteDistance = true;
     return sky;
@@ -578,12 +578,12 @@ function createWorldSky(scene: Scene) {
 
   const skyMat = new SkyMaterial('world-sky-material', scene);
   skyMat.backFaceCulling = false;
-  skyMat.luminance = 0.35;
-  skyMat.turbidity = 4;
+  skyMat.luminance = 0.1;
+  skyMat.turbidity = 2;
   skyMat.rayleigh = 2.5;
-  skyMat.mieCoefficient = 0.005;
-  skyMat.mieDirectionalG = 0.80;
-  skyMat.inclination = 0.48;
+  skyMat.mieCoefficient = 0.003;
+  skyMat.mieDirectionalG = 0.8;
+  skyMat.inclination = 0.15;
   skyMat.azimuth = 0.25;
 
   const skybox = MeshBuilder.CreateBox('world-skybox', { size: 1000 }, scene);
@@ -701,9 +701,9 @@ function createMountainRing(scene: Scene) {
   vertexData.applyToMesh(mountains);
 
   const mat = new StandardMaterial('mountain-mat', scene);
-  mat.diffuseColor = new Color3(0.18, 0.24, 0.32);
+  mat.diffuseColor = new Color3(0.30, 0.38, 0.48);
   mat.specularColor = new Color3(0, 0, 0);
-  mat.emissiveColor = new Color3(0.06, 0.08, 0.12);
+  mat.emissiveColor = new Color3(0.12, 0.18, 0.28);
   mat.backFaceCulling = false;
   mountains.material = mat;
   mountains.isPickable = false;
@@ -730,10 +730,17 @@ function terrainNoiseRaw(x: number, z: number): number {
   );
 }
 
+/** Water level constant — the ocean surface sits at this Y */
+const WATER_LEVEL = -0.4;
+
+/** Shore band: terrain transitions from land to below-water between these radii */
+const SHORE_INNER = 58;  // where beach starts sloping
+const SHORE_OUTER = 78;  // where terrain is fully submerged
+
 /**
  * Actual ground height at (x, z) — matches the vertex-displaced mesh exactly.
- * Applies center flattening (hub area) and edge fade so characters walk on
- * the real surface instead of floating.
+ * Applies center flattening (hub area), edge fade, and shore slope so the
+ * island drops into the ocean naturally.
  */
 function terrainHeight(x: number, z: number): number {
   const distFromCenter = Math.sqrt(x * x + z * z);
@@ -741,7 +748,91 @@ function terrainHeight(x: number, z: number): number {
   // Hills peak around the playable zone, then flatten toward horizon
   const riseZone = Math.min(1, distFromCenter / 40);
   const outerFade = Math.max(0, 1 - Math.max(0, (distFromCenter - 50)) / 100);
-  return terrainNoiseRaw(x, z) * (1 - centerFlatten) * riseZone * outerFade;
+  let h = terrainNoiseRaw(x, z) * (1 - centerFlatten) * riseZone * outerFade;
+
+  // Keep terrain above water level inside the island so water doesn't poke through
+  if (distFromCenter < SHORE_INNER) {
+    h = Math.max(h, WATER_LEVEL + 0.15);
+  }
+
+  // Shore slope: smoothly drop terrain below water level at the island edge
+  if (distFromCenter > SHORE_INNER) {
+    const t = Math.min(1, (distFromCenter - SHORE_INNER) / (SHORE_OUTER - SHORE_INNER));
+    const eased = t * t * (3 - 2 * t); // smoothstep
+    const seabedDepth = WATER_LEVEL - 1.5; // how far below water the seabed sits
+    h = h * (1 - eased) + seabedDepth * eased;
+  }
+  return h;
+}
+
+/** Generate a 512×512 procedural grass texture on canvas — zero external files */
+function createProceduralGrassTexture(scene: Scene): Texture {
+  const SIZE = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+  const ctx = canvas.getContext('2d')!;
+
+  // Base fill — warm dirt/soil tone (like open world games beneath grass)
+  ctx.fillStyle = '#8B7355';
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  // Layer 1: earthy noise patches — sandy/clay color variation
+  const grassRand = seededRandom(2025);
+  for (let i = 0; i < 2800; i++) {
+    const x = grassRand() * SIZE;
+    const y = grassRand() * SIZE;
+    const w = 2 + grassRand() * 8;
+    const h = 2 + grassRand() * 6;
+    const hue = 28 + grassRand() * 18;       // warm brown-tan range (28-46)
+    const saturation = 20 + grassRand() * 25; // earthy, not vivid
+    const lightness = 32 + grassRand() * 18;  // mid-tone dirt (32-50%)
+    ctx.fillStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${0.3 + grassRand() * 0.4})`;
+    ctx.fillRect(x, y, w, h);
+  }
+
+  // Layer 2: fine grain texture — tiny specks for soil detail
+  for (let i = 0; i < 3000; i++) {
+    const x = grassRand() * SIZE;
+    const y = grassRand() * SIZE;
+    const r = 0.5 + grassRand() * 2;
+    const hue = 25 + grassRand() * 20;
+    const lightness = 28 + grassRand() * 24;
+    ctx.fillStyle = `hsla(${hue}, ${25 + grassRand() * 15}%, ${lightness}%, ${0.2 + grassRand() * 0.3})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Layer 3: darker patches — shadows / richer soil spots
+  for (let i = 0; i < 400; i++) {
+    const x = grassRand() * SIZE;
+    const y = grassRand() * SIZE;
+    const r = 1 + grassRand() * 5;
+    ctx.fillStyle = `rgba(50, 35, 20, ${0.1 + grassRand() * 0.15})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Layer 4: sparse lighter sandy highlights
+  for (let i = 0; i < 200; i++) {
+    const x = grassRand() * SIZE;
+    const y = grassRand() * SIZE;
+    const r = 1 + grassRand() * 3;
+    ctx.fillStyle = `rgba(180, 160, 130, ${0.08 + grassRand() * 0.1})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const dataUrl = canvas.toDataURL('image/png');
+  const tex = new Texture(dataUrl, scene, false, true, Texture.BILINEAR_SAMPLINGMODE);
+  // Tile the texture across the ground — scale controls how many repeats
+  tex.uScale = 28;
+  tex.vScale = 28;
+
+  return tex;
 }
 
 /** Terrain ground with vertex displacement, vertex colors, and horizon fade */
@@ -770,19 +861,31 @@ function createWorldGround(scene: Scene, size = 220) {
     positions[i * 3 + 1] = h;
     const distFromCenter = Math.sqrt(x * x + z * z);
 
-    // Vertex colors: green base, brownish on higher spots
-    const greenBase = 0.28 + Math.random() * 0.08;
+    // Vertex colors: warm dirt/soil base matching the ground texture
     const slope = Math.abs(h) / 0.8;
-    let r = 0.18 + slope * 0.25;
-    let g = greenBase + (1 - slope) * 0.15;
-    let b = 0.08 + 0.06;
+    let r = 0.45 + Math.random() * 0.08 + slope * 0.1;  // warm brown
+    let g = 0.36 + Math.random() * 0.06 + slope * 0.05;  // earthy tan
+    let b = 0.24 + Math.random() * 0.04;                  // muted warm
 
-    // Outer fade: blend vertex color toward fog color (0.82, 0.88, 0.95)
-    // so the ground dissolves seamlessly into the sky at the horizon
-    const fogBlend = Math.min(1, Math.max(0, (distFromCenter - 50)) / 70);
-    r = r + (0.82 - r) * fogBlend;
-    g = g + (0.88 - g) * fogBlend;
-    b = b + (0.95 - b) * fogBlend;
+    // Beach transition: blend to sandy color near shore
+    const shoreT = Math.min(1, Math.max(0, (distFromCenter - (SHORE_INNER - 8))) / 16);
+    if (shoreT > 0) {
+      // Sandy beach color
+      const sandR = 0.82 + Math.random() * 0.06;
+      const sandG = 0.72 + Math.random() * 0.05;
+      const sandB = 0.55 + Math.random() * 0.04;
+      r = r + (sandR - r) * shoreT;
+      g = g + (sandG - g) * shoreT;
+      b = b + (sandB - b) * shoreT;
+    }
+
+    // Underwater: darken terrain below water to dark seabed
+    const underwaterT = Math.min(1, Math.max(0, (distFromCenter - SHORE_OUTER + 5)) / 15);
+    if (underwaterT > 0) {
+      r = r + (0.15 - r) * underwaterT;
+      g = g + (0.22 - g) * underwaterT;
+      b = b + (0.18 - b) * underwaterT;
+    }
     colors.push(r, g, b, 1);
   }
 
@@ -794,12 +897,248 @@ function createWorldGround(scene: Scene, size = 220) {
   ground.updateVerticesData(VertexBuffer.NormalKind, normals);
 
   const mat = new StandardMaterial('world-ground-mat', scene);
-  mat.diffuseColor = new Color3(0.22, 0.48, 0.26);
   mat.specularColor = new Color3(0.05, 0.05, 0.05);
+
+  // --- Procedural grass texture (canvas-generated, no external assets) ---
+  const grassTex = createProceduralGrassTexture(scene);
+  mat.diffuseTexture = grassTex;
+  // Muted tint so vertex colors blend naturally without brightening
+  mat.diffuseColor = new Color3(0.82, 0.75, 0.62);
+
   ground.material = mat;
   ground.receiveShadows = true;
 
   return ground;
+}
+
+/** Create an animated ocean plane surrounding the island */
+function createOcean(scene: Scene) {
+  const OCEAN_SIZE = 400;
+  const OCEAN_SUBDIVISIONS = 128; // higher resolution for tight shore fade
+
+  const water = MeshBuilder.CreateGround('ocean', {
+    width: OCEAN_SIZE,
+    height: OCEAN_SIZE,
+    subdivisions: OCEAN_SUBDIVISIONS,
+    updatable: true,
+  }, scene);
+  water.position.y = WATER_LEVEL;
+  water.isPickable = false;
+
+  const mat = new StandardMaterial('ocean-mat', scene);
+  mat.diffuseColor = new Color3(0.08, 0.28, 0.42);
+  mat.specularColor = new Color3(0.4, 0.5, 0.55);
+  mat.specularPower = 64;
+  mat.emissiveColor = new Color3(0.03, 0.1, 0.18);
+  mat.backFaceCulling = false;
+  // Use vertex alpha instead of material alpha so the island center is fully transparent
+  mat.useVertexAlpha = true;
+  water.material = mat;
+
+  // Set per-vertex alpha: transparent inside the island, opaque in the ocean
+  const positions = water.getVerticesData(VertexBuffer.PositionKind)!;
+  const vertCount = positions.length / 3;
+  const colors: number[] = [];
+  const FADE_INNER = SHORE_OUTER - 4; // water only starts appearing near the outer shore edge
+  const FADE_OUTER = SHORE_OUTER + 10; // fully opaque well past the shoreline
+
+  for (let i = 0; i < vertCount; i++) {
+    const x = positions[i * 3];
+    const z = positions[i * 3 + 2];
+    const dist = Math.sqrt(x * x + z * z);
+
+    // 0 = fully transparent (island interior), 1 = fully visible (ocean)
+    const t = Math.min(1, Math.max(0, (dist - FADE_INNER) / (FADE_OUTER - FADE_INNER)));
+    const alpha = t * t * 0.82; // smoothed fade, max 0.82 opacity
+
+    // Tint deeper water slightly darker
+    const deepT = Math.min(1, Math.max(0, (dist - FADE_OUTER) / 60));
+    const r = 0.08 + deepT * 0.04;
+    const g = 0.28 + deepT * 0.08;
+    const b = 0.42 + deepT * 0.1;
+
+    colors.push(r, g, b, alpha);
+  }
+  water.setVerticesData(VertexBuffer.ColorKind, colors);
+
+  // Animate gentle waves by displacing vertices
+  const basePositions = positions.slice();
+
+  scene.registerBeforeRender(() => {
+    const time = performance.now() * 0.001;
+    const pos = water.getVerticesData(VertexBuffer.PositionKind)!;
+
+    for (let i = 0; i < vertCount; i++) {
+      const x = basePositions[i * 3];
+      const z = basePositions[i * 3 + 2];
+      const dist = Math.sqrt(x * x + z * z);
+
+      // No waves inside the island, fade in wave amplitude at shore
+      const waveStrength = Math.min(1, Math.max(0, (dist - FADE_INNER) / (FADE_OUTER - FADE_INNER)));
+
+      // Layered sine waves for natural ocean motion
+      const wave1 = Math.sin(x * 0.06 + time * 0.8) * Math.cos(z * 0.05 + time * 0.6) * 0.15;
+      const wave2 = Math.sin(x * 0.12 + z * 0.08 + time * 1.2) * 0.07;
+      const wave3 = Math.sin(x * 0.25 + time * 1.8) * Math.cos(z * 0.2 + time * 1.1) * 0.03;
+      pos[i * 3 + 1] = (wave1 + wave2 + wave3) * waveStrength;
+    }
+
+    water.updateVerticesData(VertexBuffer.PositionKind, pos);
+  });
+
+  return water;
+}
+
+/**
+ * 3D grass blades using thin instances — cross-billboard X-shaped patches.
+ * ~50000 patches × 2 planes = 2 draw calls total via GPU instancing.
+ */
+function createGrassBlades(
+  scene: Scene,
+  zones: Array<{ worldPosition: [number, number, number] }>,
+) {
+  const GRASS_COUNT = 500000;
+  const GRASS_RADIUS = 55; // playable zone + a bit beyond
+  const BLADE_HEIGHT = 0.3; // short grass
+  const BLADE_WIDTH = 0.34; // wider patches to fill gaps
+
+  const zonePositions = zones.map((z) => ({ x: z.worldPosition[0], z: z.worldPosition[2] }));
+
+  // Check if a position is clear of zone structures and center hub
+  function isClearForGrass(x: number, z: number): boolean {
+    if (Math.sqrt(x * x + z * z) < 8) return false; // hub platform only
+    for (const zp of zonePositions) {
+      const dx = x - zp.x;
+      const dz = z - zp.z;
+      if (Math.sqrt(dx * dx + dz * dz) < 5) return false; // tight exclusion around structures
+    }
+    return true;
+  }
+
+  // --- Procedural grass blade texture (canvas) ---
+  const TEX_SIZE = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = TEX_SIZE;
+  canvas.height = TEX_SIZE;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const bladeRand = seededRandom(555);
+
+  // Draw 8-12 grass blades in the texture tile for denser patches
+  const bladeCount = 8 + Math.floor(bladeRand() * 5);
+  for (let b = 0; b < bladeCount; b++) {
+    const bx = 12 + bladeRand() * (TEX_SIZE - 24);
+    const baseY = TEX_SIZE; // bottom of canvas
+    const tipY = 8 + bladeRand() * (TEX_SIZE * 0.5); // top portion
+    const width = 3 + bladeRand() * 5;
+    const lean = (bladeRand() - 0.5) * 16; // slight lean
+
+    // Muted, natural green shades — matching tree/bush foliage tones
+    const hue = 95 + bladeRand() * 30; // olive-green to forest-green range
+    const sat = 20 + bladeRand() * 15; // more desaturated
+    const light = 14 + bladeRand() * 12; // darker, earthier
+
+    ctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
+    ctx.beginPath();
+    ctx.moveTo(bx - width / 2, baseY);
+    ctx.lineTo(bx + width / 2, baseY);
+    ctx.lineTo(bx + lean, tipY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Subtle lighter edge — very faint
+    ctx.fillStyle = `hsla(${hue}, ${sat + 5}%, ${light + 8}%, 0.3)`;
+    ctx.beginPath();
+    ctx.moveTo(bx, baseY);
+    ctx.lineTo(bx + width / 2, baseY);
+    ctx.lineTo(bx + lean, tipY);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  const dataUrl = canvas.toDataURL('image/png');
+  const grassTex = new Texture(dataUrl, scene, false, true, Texture.BILINEAR_SAMPLINGMODE);
+  grassTex.hasAlpha = true;
+
+  const grassMat = new StandardMaterial('grass-blade-mat', scene);
+  grassMat.diffuseTexture = grassTex;
+  grassMat.opacityTexture = grassTex;
+  grassMat.emissiveColor = new Color3(0.0, 0.0, 0.0); // no self-glow
+  grassMat.specularColor = new Color3(0, 0, 0);
+  grassMat.backFaceCulling = false;
+  grassMat.alphaMode = 1; // ALPHA_ADD would glow; use default alpha test
+  grassMat.disableLighting = false;
+
+  // Create two planes for the X-cross pattern
+  const planeA = MeshBuilder.CreatePlane('grass-blade-a', {
+    width: BLADE_WIDTH,
+    height: BLADE_HEIGHT,
+  }, scene);
+  planeA.material = grassMat;
+  planeA.isPickable = false;
+  planeA.alwaysSelectAsActiveMesh = true; // prevent frustum culling per-instance
+
+  const planeB = MeshBuilder.CreatePlane('grass-blade-b', {
+    width: BLADE_WIDTH,
+    height: BLADE_HEIGHT,
+  }, scene);
+  planeB.material = grassMat;
+  planeB.isPickable = false;
+  planeB.alwaysSelectAsActiveMesh = true;
+
+  // Collect thin instance matrices
+  const matricesA: Matrix[] = [];
+  const matricesB: Matrix[] = [];
+  const grassPosRand = seededRandom(999);
+
+  for (let i = 0; i < GRASS_COUNT; i++) {
+    // Random position within the grass radius
+    const angle = grassPosRand() * Math.PI * 2;
+    const dist = Math.sqrt(grassPosRand()) * GRASS_RADIUS; // sqrt for even distribution
+    const x = Math.cos(angle) * dist;
+    const z = Math.sin(angle) * dist;
+
+    if (!isClearForGrass(x, z)) continue;
+
+    const y = terrainHeight(x, z) + BLADE_HEIGHT * 0.48; // half-height so base sits on ground
+
+    // Random Y rotation for variety
+    const rotY = grassPosRand() * Math.PI;
+    // Slight random scale variation
+    const scale = 0.7 + grassPosRand() * 0.6;
+    // Slight random tilt for natural look
+    const tiltX = (grassPosRand() - 0.5) * 0.15;
+    const tiltZ = (grassPosRand() - 0.5) * 0.15;
+
+    // Build transformation matrices directly
+    const pos = new Vector3(x, y, z);
+    const scaleVec = new Vector3(scale, scale, scale);
+
+    // Plane A: oriented at rotY with slight tilt
+    const rotMatA = Matrix.RotationYawPitchRoll(rotY, tiltX, tiltZ);
+    const scaleMatA = Matrix.Scaling(scaleVec.x, scaleVec.y, scaleVec.z);
+    const transMatA = Matrix.Translation(pos.x, pos.y, pos.z);
+    matricesA.push(scaleMatA.multiply(rotMatA).multiply(transMatA));
+
+    // Plane B: perpendicular (rotY + 90°)
+    const rotMatB = Matrix.RotationYawPitchRoll(rotY + Math.PI / 2, tiltX, tiltZ);
+    matricesB.push(scaleMatA.multiply(rotMatB).multiply(transMatA));
+  }
+
+  // Apply thin instances in bulk
+  if (matricesA.length > 0) {
+    const bufA = new Float32Array(matricesA.length * 16);
+    matricesA.forEach((m, i) => m.copyToArray(bufA, i * 16));
+    planeA.thinInstanceSetBuffer('matrix', bufA, 16);
+
+    const bufB = new Float32Array(matricesB.length * 16);
+    matricesB.forEach((m, i) => m.copyToArray(bufB, i * 16));
+    planeB.thinInstanceSetBuffer('matrix', bufB, 16);
+  } else {
+    planeA.dispose();
+    planeB.dispose();
+  }
 }
 
 /** Create procedural trees, grass tufts, and rocks */
@@ -1333,7 +1672,7 @@ export function createGlobeScene(
 export async function createWorldScene(canvas: HTMLCanvasElement, options: WorldSceneOptions): Promise<WorldSceneController> {
   const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
   const scene = new Scene(engine);
-  scene.clearColor = new Color4(0.82, 0.88, 0.95, 1);
+  scene.clearColor = new Color4(0.35, 0.65, 0.95, 1);
 
   // Initialize Havok physics engine
   const havokInterface = await HavokPhysics({
@@ -1346,6 +1685,7 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
   const { shadowGen } = createWorldLighting(scene);
   createWorldSky(scene);
   const worldGround = createWorldGround(scene, 350);
+  createOcean(scene);
   // Use a flat invisible box as the physics floor — the MESH shape on the
   // vertex-displaced terrain can fail with Havok capsule collision.
   const physicsFloor = MeshBuilder.CreateBox('physics-floor', { width: 350, height: 0.2, depth: 350 }, scene);
@@ -1402,6 +1742,7 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
 
   // GLB-based vegetation (trees, bushes, rocks)
   void createVegetation(scene, options.zones);
+  createGrassBlades(scene, options.zones);
 
   // NPC avatar: use the prototype Lara Croft GLB regardless of profile state
   const npcAvatar: Avatar | null = options.avatar ?? {
