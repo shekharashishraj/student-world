@@ -68,7 +68,7 @@ async function loadAnimatedCharacter(
   try {
     // 1. Load the character model (mesh + skeleton) from character.glb
     //    Exported from Mixamo with skin — includes geometry and bone hierarchy
-    const container = await SceneLoader.LoadAssetContainerAsync(
+      const container = await SceneLoader.LoadAssetContainerAsync(
       `${ANIM_BASE}/`,
       'character.glb',
       scene,
@@ -245,6 +245,7 @@ type WorldSceneOptions = {
   npcs: NpcConfig[];
   onZoneChange: (zoneId: string) => void;
   onInteractableChange: (npcId: string | null) => void;
+  onProgress?: (percent: number, status: string) => void;
 };
 
 export type WorldSceneController = {
@@ -274,10 +275,11 @@ function fitImportedAvatar(root: TransformNode, targetHeight = 3.35) {
   const meshes = root.getChildMeshes();
   if (meshes.length === 0) return;
 
-  // Temporarily zero the root's local position so world-space measurements
-  // are not polluted by the parent's current position (which may have been
-  // updated by the render loop before this async call resolves).
+  // Temporarily detach from parent chain so world-space measurements are
+  // not polluted by ancestor positions (e.g. playerRoot.y at spawn height).
+  const savedParent = root.parent;
   const savedY = root.position.y;
+  root.parent = null;
   root.position.y = 0;
 
   let minY = Number.POSITIVE_INFINITY;
@@ -292,19 +294,21 @@ function fitImportedAvatar(root: TransformNode, targetHeight = 3.35) {
 
   if (!Number.isFinite(minY) || !Number.isFinite(maxY)) {
     root.position.y = savedY;
+    root.parent = savedParent;
     return;
   }
 
   const height = maxY - minY;
   if (height <= 0) {
     root.position.y = savedY;
+    root.parent = savedParent;
     return;
   }
 
   const scaleFactor = targetHeight / height;
   root.scaling = new Vector3(scaleFactor, scaleFactor, scaleFactor);
 
-  // Recompute after scaling and plant feet at local y=0 (relative to parent)
+  // Recompute after scaling — still detached, so world = local
   let scaledMinY = Number.POSITIVE_INFINITY;
   root.getChildMeshes().forEach((mesh) => {
     mesh.computeWorldMatrix(true);
@@ -312,15 +316,15 @@ function fitImportedAvatar(root: TransformNode, targetHeight = 3.35) {
   });
 
   if (Number.isFinite(scaledMinY)) {
-    // Offset the child so its feet sit at the parent's origin (y=0 local).
-    // The parent (playerRoot) already gets its Y set to terrainHeight each
-    // frame, so we only need to cancel the model's own local floor offset.
-    // Measure with parent at y=0 (which we already set above), so
-    // scaledMinY IS the local offset we need to cancel.
+    // Offset so feet sit at local y=0. Since we measured without any parent,
+    // scaledMinY is a pure local offset — correct regardless of parent position.
     root.position.y = -scaledMinY;
   } else {
     root.position.y = savedY;
   }
+
+  // Re-attach to parent chain
+  root.parent = savedParent;
 }
 
 function mountBabylonScene(canvas: HTMLCanvasElement, builder: (scene: Scene, engine: Engine) => Cleanup | void): Cleanup {
@@ -382,7 +386,7 @@ function createWorldLighting(scene: Scene) {
     shadowGen.usePercentageCloserFiltering = true;
   } else {
     shadowGen.useBlurExponentialShadowMap = true;
-    shadowGen.blurKernel = 16;
+    shadowGen.blurKernel = 8;
   }
   shadowGen.darkness = 0.35;
 
@@ -907,6 +911,8 @@ function createWorldGround(scene: Scene, size = 220) {
 
   ground.material = mat;
   ground.receiveShadows = true;
+  ground.freezeWorldMatrix(); // terrain never moves
+  ground.doNotSyncBoundingInfo = true;
 
   return ground;
 }
@@ -914,7 +920,7 @@ function createWorldGround(scene: Scene, size = 220) {
 /** Create an animated ocean plane surrounding the island */
 function createOcean(scene: Scene) {
   const OCEAN_SIZE = 400;
-  const OCEAN_SUBDIVISIONS = 128; // higher resolution for tight shore fade
+  const OCEAN_SUBDIVISIONS = 64; // reduced from 128 for performance — waves don't need high resolution
 
   const water = MeshBuilder.CreateGround('ocean', {
     width: OCEAN_SIZE,
@@ -961,12 +967,17 @@ function createOcean(scene: Scene) {
   }
   water.setVerticesData(VertexBuffer.ColorKind, colors);
 
-  // Animate gentle waves by displacing vertices
-  const basePositions = positions.slice();
+  // Animate gentle waves by displacing vertices (every 2nd frame for performance)
+  const basePositions = new Float32Array(positions);
+  // Reusable working array — avoids getVerticesData() GPU→CPU stall each frame
+  const workingPositions = new Float32Array(positions);
+  let waterFrameSkip = 0;
 
   scene.registerBeforeRender(() => {
+    // Only update water every 2nd frame — waves are slow enough that this is imperceptible
+    if (++waterFrameSkip % 2 !== 0) return;
+
     const time = performance.now() * 0.001;
-    const pos = water.getVerticesData(VertexBuffer.PositionKind)!;
 
     for (let i = 0; i < vertCount; i++) {
       const x = basePositions[i * 3];
@@ -980,10 +991,11 @@ function createOcean(scene: Scene) {
       const wave1 = Math.sin(x * 0.06 + time * 0.8) * Math.cos(z * 0.05 + time * 0.6) * 0.15;
       const wave2 = Math.sin(x * 0.12 + z * 0.08 + time * 1.2) * 0.07;
       const wave3 = Math.sin(x * 0.25 + time * 1.8) * Math.cos(z * 0.2 + time * 1.1) * 0.03;
-      pos[i * 3 + 1] = (wave1 + wave2 + wave3) * waveStrength;
+      // Only update Y — X and Z never change from basePositions
+      workingPositions[i * 3 + 1] = (wave1 + wave2 + wave3) * waveStrength;
     }
 
-    water.updateVerticesData(VertexBuffer.PositionKind, pos);
+    water.updateVerticesData(VertexBuffer.PositionKind, workingPositions);
   });
 
   return water;
@@ -997,7 +1009,7 @@ function createGrassBlades(
   scene: Scene,
   zones: Array<{ worldPosition: [number, number, number] }>,
 ) {
-  const GRASS_COUNT = 500000;
+  const GRASS_COUNT = 750000;
   const GRASS_RADIUS = 55; // playable zone + a bit beyond
   const BLADE_HEIGHT = 0.3; // short grass
   const BLADE_WIDTH = 0.34; // wider patches to fill gaps
@@ -1069,6 +1081,7 @@ function createGrassBlades(
   grassMat.backFaceCulling = false;
   grassMat.alphaMode = 1; // ALPHA_ADD would glow; use default alpha test
   grassMat.disableLighting = false;
+  grassMat.freeze();
 
   // Create two planes for the X-cross pattern
   const planeA = MeshBuilder.CreatePlane('grass-blade-a', {
@@ -1077,7 +1090,7 @@ function createGrassBlades(
   }, scene);
   planeA.material = grassMat;
   planeA.isPickable = false;
-  planeA.alwaysSelectAsActiveMesh = true; // prevent frustum culling per-instance
+  // frustum culling re-enabled — thin instance bounding info covers the full grass area
 
   const planeB = MeshBuilder.CreatePlane('grass-blade-b', {
     width: BLADE_WIDTH,
@@ -1085,7 +1098,7 @@ function createGrassBlades(
   }, scene);
   planeB.material = grassMat;
   planeB.isPickable = false;
-  planeB.alwaysSelectAsActiveMesh = true;
+  // frustum culling re-enabled for planeB too
 
   // Collect thin instance matrices
   const matricesA: Matrix[] = [];
@@ -1202,14 +1215,19 @@ async function createVegetation(scene: Scene, zones: Array<{ worldPosition: [num
     root.position = pos;
     root.scaling.setAll(scaleFactor);
     root.rotation.y = rotY;
-    // Freeze world matrix for static vegetation — avoids recomputation each frame
+    // Force world matrix recomputation THEN freeze — without this, the frozen
+    // matrix is stale (still at origin) because the parent's position/scale
+    // haven't propagated to child world matrices yet.
+    root.computeWorldMatrix(true);
     root.getChildMeshes().forEach((mesh) => {
+      mesh.computeWorldMatrix(true);
       mesh.freezeWorldMatrix();
       mesh.doNotSyncBoundingInfo = true;
       // Zero-out any emissive on vegetation materials so they don't bloom
       const mat = mesh.material as StandardMaterial | null;
       if (mat && 'emissiveColor' in mat) {
         mat.emissiveColor = Color3.Black();
+        mat.freeze();
       }
     });
     return root;
@@ -1243,6 +1261,7 @@ async function createVegetation(scene: Scene, zones: Array<{ worldPosition: [num
   const rockMat = new StandardMaterial('rock-mat', scene);
   rockMat.diffuseColor = new Color3(0.45, 0.42, 0.38);
   rockMat.specularColor = new Color3(0.02, 0.02, 0.02);
+  rockMat.freeze();
 
   for (let i = 0; i < 18; i++) {
     const x = (rand() - 0.5) * 68;
@@ -1257,6 +1276,8 @@ async function createVegetation(scene: Scene, zones: Array<{ worldPosition: [num
     rock.rotation = new Vector3(rand() * 0.4, rand() * Math.PI, rand() * 0.3);
     rock.material = rockMat;
     addPhysics(rock, PhysicsShapeType.SPHERE, { mass: 0 }, scene);
+    rock.freezeWorldMatrix();
+    rock.doNotSyncBoundingInfo = true;
   }
 }
 
@@ -1281,6 +1302,9 @@ function createPath(scene: Scene, target: Vector3, color: string) {
   material.emissiveColor = hex(color).scale(0.1);
   material.specularColor = new Color3(0.05, 0.05, 0.05);
   walkway.material = material;
+  walkway.freezeWorldMatrix();
+  walkway.doNotSyncBoundingInfo = true;
+  material.freeze();
   return walkway;
 }
 
@@ -1369,8 +1393,10 @@ function buildZoneLandmark(scene: Scene, zone: ZoneConfig) {
           m.parent = towerRoot;
         }
       });
-      // Freeze since the tower never moves
+      // Recompute world matrices THEN freeze (tower never moves)
+      towerRoot.computeWorldMatrix(true);
       towerRoot.getChildMeshes().forEach((m) => {
+        m.computeWorldMatrix(true);
         m.freezeWorldMatrix();
         m.doNotSyncBoundingInfo = true;
       });
@@ -1443,6 +1469,14 @@ function buildZoneLandmark(scene: Scene, zone: ZoneConfig) {
   zoneLight.diffuse = hex(zone.accent);
   zoneLight.intensity = 0.4;
   zoneLight.range = 14;
+
+  // Recompute world matrices THEN freeze — all static zone geometry
+  zoneRoot.computeWorldMatrix(true);
+  zoneRoot.getChildMeshes().forEach((m) => {
+    m.computeWorldMatrix(true);
+    m.freezeWorldMatrix();
+    m.doNotSyncBoundingInfo = true;
+  });
 }
 
 function createNexusHub(scene: Scene) {
@@ -1455,34 +1489,43 @@ function createNexusHub(scene: Scene) {
   base3.position = new Vector3(0, 0.15, 0);
   base3.material = baseMaterial;
   addPhysics(base3, PhysicsShapeType.CYLINDER, { mass: 0 }, scene);
+  base3.freezeWorldMatrix();
 
   const base2 = MeshBuilder.CreateCylinder('nexus-hub-base-2', { diameter: 14.5, height: 0.4 }, scene);
   base2.position = new Vector3(0, 0.5, 0);
   base2.material = baseMaterial;
   addPhysics(base2, PhysicsShapeType.CYLINDER, { mass: 0 }, scene);
+  base2.freezeWorldMatrix();
 
   const base = MeshBuilder.CreateCylinder('nexus-hub-base', { diameter: 13, height: 0.6 }, scene);
   base.position = new Vector3(0, 0.9, 0);
   base.material = baseMaterial;
   addPhysics(base, PhysicsShapeType.CYLINDER, { mass: 0 }, scene);
+  base.freezeWorldMatrix();
+
+  baseMaterial.freeze();
 
   // Pillars around the edge
   const pillarMat = new StandardMaterial('nexus-pillar-mat', scene);
   pillarMat.diffuseColor = new Color3(0.28, 0.3, 0.36);
   pillarMat.emissiveColor = new Color3(0.04, 0.04, 0.06);
+  pillarMat.freeze();
   for (let i = 0; i < 6; i++) {
     const angle = (i / 6) * Math.PI * 2;
     const pillar = MeshBuilder.CreateCylinder(`nexus-pillar-${i}`, { diameter: 0.45, height: 2.8 }, scene);
     pillar.position = new Vector3(Math.cos(angle) * 6.2, 2.0, Math.sin(angle) * 6.2);
     pillar.material = pillarMat;
     addPhysics(pillar, PhysicsShapeType.CYLINDER, { mass: 0 }, scene);
+    pillar.freezeWorldMatrix();
 
     // Small orb on top of each pillar
     const orb = MeshBuilder.CreateSphere(`nexus-pillar-orb-${i}`, { diameter: 0.35 }, scene);
     orb.position = new Vector3(Math.cos(angle) * 6.2, 3.55, Math.sin(angle) * 6.2);
     const orbMat = new StandardMaterial(`nexus-pillar-orb-mat-${i}`, scene);
     orbMat.emissiveColor = new Color3(0.85, 0.68, 0.32);
+    orbMat.freeze();
     orb.material = orbMat;
+    orb.freezeWorldMatrix();
   }
 
   // Rings at different heights
@@ -1674,7 +1717,10 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.35, 0.65, 0.95, 1);
 
+  const progress = options.onProgress ?? (() => {});
+
   // Initialize Havok physics engine
+  progress(5, 'Initializing physics...');
   const havokInterface = await HavokPhysics({
     locateFile: () => '/HavokPhysics.wasm',
   });
@@ -1682,9 +1728,14 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
   scene.enablePhysics(new Vector3(0, -9.81, 0), havokPlugin);
 
   // Immersive world setup
+  progress(10, 'Creating lighting...');
   const { shadowGen } = createWorldLighting(scene);
   createWorldSky(scene);
+
+  progress(18, 'Building terrain...');
   const worldGround = createWorldGround(scene, 350);
+
+  progress(25, 'Creating ocean...');
   createOcean(scene);
   // Use a flat invisible box as the physics floor — the MESH shape on the
   // vertex-displaced terrain can fail with Havok capsule collision.
@@ -1693,9 +1744,7 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
   physicsFloor.isVisible = false;
   new PhysicsAggregate(physicsFloor, PhysicsShapeType.BOX, { mass: 0, restitution: 0.1 }, scene);
 
-  // GlowLayer removed — the full-screen post-process was expensive and caused
-  // unintended bloom on GLB vegetation. Emissive materials still look fine without it.
-
+  progress(32, 'Building the Sanctum...');
   const hub = createNexusHub(scene);
   const playerRoot = new TransformNode('player-root', scene);
   playerRoot.position = new Vector3(0, 2, 7);
@@ -1735,13 +1784,13 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
   let lastPointerX = 0;
   let lastPointerY = 0;
 
+  progress(40, 'Placing zone landmarks...');
   options.zones.forEach((zone) => {
     buildZoneLandmark(scene, zone);
     createPath(scene, new Vector3(zone.worldPosition[0], 0, zone.worldPosition[2]), zone.color);
   });
 
-  // GLB-based vegetation (trees, bushes, rocks)
-  void createVegetation(scene, options.zones);
+  progress(50, 'Planting grass...');
   createGrassBlades(scene, options.zones);
 
   // NPC avatar: use the prototype Lara Croft GLB regardless of profile state
@@ -1782,10 +1831,25 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
   let talkingNpcId: string | null = null;
   let playerAnimCtrl: AnimationController | null = null;
 
-  void loadAnimatedCharacter(scene, playerVisual).then((ctrl) => {
-    if (ctrl) {
-      playerAnimCtrl = ctrl;
-      addShadowCasters(playerVisual);
+  // Load character FIRST (highest priority — player expects to see themselves immediately)
+  progress(60, 'Loading character...');
+  const charCtrl = await loadAnimatedCharacter(scene, playerVisual);
+  if (charCtrl) {
+    playerAnimCtrl = charCtrl;
+    addShadowCasters(playerVisual);
+  }
+
+  // Load vegetation AFTER character (lower priority)
+  progress(75, 'Loading vegetation...');
+  await createVegetation(scene, options.zones);
+
+  // Freeze all static materials AFTER all geometry/assets are created
+  progress(90, 'Finalizing world...');
+  scene.materials.forEach((mat) => {
+    // Don't freeze the ocean material (vertex alpha updates) or
+    // character materials (may change at runtime)
+    if (mat.name !== 'ocean-mat' && !mat.name.includes('character') && !mat.name.includes('player')) {
+      mat.freeze();
     }
   });
 
@@ -1941,7 +2005,7 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
     // Anim-pose lift: fitImportedAvatar measures the bind-pose bounding box,
     // but the idle/walk animations lower the hips from the T-pose.  This
     // constant lifts the visual so the feet sit on the terrain surface.
-    const animPoseLift = 0.55;
+    const animPoseLift = 0.15;
     playerVisual.position.y = bob + animPoseLift;
 
     hub.crystal.rotation.y += 0.008;
@@ -1949,8 +2013,16 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
     hub.ring2.rotation.y -= 0.004;
     hub.ring3.rotation.y += 0.006;
 
-    let nextZoneId = 'nexus-plaza';
+    let nextZoneId = '';
     let nearestZoneDistance = Number.POSITIVE_INFINITY;
+
+    // Check distance to hub center (nexus-plaza is at origin)
+    const hubDist = Math.sqrt(playerRoot.position.x * playerRoot.position.x + playerRoot.position.z * playerRoot.position.z);
+    if (hubDist < 10.5) {
+      nearestZoneDistance = hubDist;
+      nextZoneId = 'nexus-plaza';
+    }
+
     options.zones.forEach((zone) => {
       const dx = playerRoot.position.x - zone.worldPosition[0];
       const dz = playerRoot.position.z - zone.worldPosition[2];
@@ -2083,6 +2155,8 @@ export async function createWorldScene(canvas: HTMLCanvasElement, options: World
     camera.position = Vector3.Lerp(camera.position, currentCameraTarget.add(cameraOffset), 1 - Math.exp(-14 * delta));
     camera.setTarget(currentCameraTarget);
   });
+
+  progress(100, 'Ready!');
 
   engine.runRenderLoop(() => {
     scene.render();

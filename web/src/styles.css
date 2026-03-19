@@ -444,9 +444,7 @@ textarea {
 .world-help,
 .world-overlay-panel,
 .dialogue-panel,
-.hud-card,
-.zone-banner,
-.interact-prompt {
+.zone-banner {
   border: 1px solid var(--line);
   background: var(--bg-card);
   box-shadow: var(--shadow);
@@ -921,19 +919,158 @@ textarea {
   to { opacity: 1; }
 }
 
-.interact-prompt {
+/* ── World Loading Screen ── */
+
+.world-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg-deep, #060e18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.8s ease;
+}
+
+.world-loading-overlay.is-fading {
+  opacity: 0;
+}
+
+.world-loading-card {
+  text-align: center;
+  max-width: 400px;
+  padding: 0 24px;
+}
+
+.world-loading-eyebrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: rgba(255, 209, 102, 0.7);
+  margin-bottom: 8px;
+}
+
+.world-loading-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--text-main, #e8ecf0);
+  margin: 0 0 28px;
+  letter-spacing: 0.02em;
+}
+
+.world-loading-bar-track {
+  width: 320px;
+  max-width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0 auto 16px;
+}
+
+.world-loading-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ffd166, #ff922b);
+  border-radius: 4px;
+  transition: width 0.35s ease;
+}
+
+.world-loading-status {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.45);
+  margin: 0;
+}
+
+/* ── Minimalist HUD (RDR / Valheim style) ── */
+
+.hud-minimal {
+  position: absolute;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 20;
+  pointer-events: none;
+  animation: hud-minimal-fade-in 0.4s ease;
+}
+
+.hud-minimal-zone {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 0, 0, 0.4);
+}
+
+.hud-minimal-action {
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.6);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: hud-minimal-pulse 2.5s ease-in-out infinite;
+}
+
+.hud-minimal-action kbd,
+.interact-minimal kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.interact-minimal {
   position: absolute;
   left: 50%;
-  bottom: 28px;
+  bottom: 32px;
   transform: translateX(-50%);
-  max-width: calc(100vw - 48px);
-  border-radius: 999px;
-  padding: 14px 22px;
-  border: 1px solid var(--line-strong);
-  background: rgba(10, 18, 29, 0.88);
-  color: var(--text-main);
-  box-shadow: var(--shadow);
   z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 0, 0, 0.4);
+  animation: hud-minimal-fade-in 0.3s ease;
+}
+
+.interact-minimal:hover {
+  color: rgba(255, 255, 255, 0.95);
+  transform: translateX(-50%) translateY(-1px);
+}
+
+@keyframes hud-minimal-fade-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes hud-minimal-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 
 .dialogue-panel {
@@ -1078,20 +1215,12 @@ textarea {
     max-width: none;
   }
 
-  .hud-card {
-    top: 16px;
-    left: 84px;
-    right: 16px;
-    max-width: none;
+  .hud-minimal {
+    bottom: 60px;
   }
 
-  .interact-prompt {
-    bottom: 16px;
-    left: 16px;
-    right: 16px;
-    width: auto;
-    max-width: none;
-    transform: none;
+  .interact-minimal {
+    bottom: 20px;
   }
 
   .dialogue-panel {

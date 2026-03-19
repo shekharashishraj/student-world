@@ -17,9 +17,9 @@ type Screen = 'home' | 'avatar' | 'globe' | 'world';
 type WorldOverlayPanel = 'guide' | 'controls';
 
 const HUB_AREA = {
-  label: 'NEXUS Plaza',
+  label: 'The Sanctum',
   moduleTitle: 'Central Hub',
-  intro: 'The central hub where the world opens in every direction.',
+  intro: 'The heart of Ascendium — where every path begins.',
   interactionHook: 'Move toward the glowing radial paths to explore each leadership district.',
 };
 
@@ -59,11 +59,15 @@ function WorldCanvas({
   dialogueNpcId,
   onZoneChange,
   onInteractableChange,
+  onProgress,
+  onReady,
 }: {
   avatar: Avatar | null;
   dialogueNpcId: string | null;
   onZoneChange: (zoneId: string) => void;
   onInteractableChange: (npcId: string | null) => void;
+  onProgress?: (percent: number, status: string) => void;
+  onReady?: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const controllerRef = useRef<WorldSceneController | null>(null);
@@ -73,23 +77,39 @@ function WorldCanvas({
     if (!canvas) return undefined;
 
     let disposed = false;
-    createWorldScene(canvas, {
-      avatar,
-      zones: ZONES,
-      npcs: NPCS,
-      onZoneChange,
-      onInteractableChange,
-    }).then((controller) => {
-      if (disposed) {
-        controller.dispose();
-      } else {
-        controllerRef.current = controller;
-      }
-    });
+    let ctrl: WorldSceneController | null = null;
+
+    // Wait a microtask so React StrictMode's immediate unmount+remount
+    // can set `disposed = true` before the expensive Engine creation begins.
+    // Without this, two Engines are created on the same canvas simultaneously,
+    // corrupting the WebGL context when the first Engine is disposed.
+    const timer = setTimeout(() => {
+      if (disposed) return;
+
+      createWorldScene(canvas, {
+        avatar,
+        zones: ZONES,
+        npcs: NPCS,
+        onZoneChange,
+        onInteractableChange,
+        onProgress,
+      }).then((controller) => {
+        if (disposed) {
+          controller.dispose();
+        } else {
+          ctrl = controller;
+          controllerRef.current = controller;
+          onReady?.();
+        }
+      });
+    }, 0);
 
     return () => {
       disposed = true;
-      controllerRef.current?.dispose();
+      clearTimeout(timer);
+      if (ctrl) {
+        ctrl.dispose();
+      }
       controllerRef.current = null;
     };
   }, [avatar, onInteractableChange, onZoneChange]);
@@ -136,12 +156,16 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPin, setSelectedPin] = useState<{ lat: number; lng: number } | null>(null);
   const [geocodeResult, setGeocodeResult] = useState<GeocodeResponse | null>(null);
-  const [activeZoneId, setActiveZoneId] = useState<string>('nexus-plaza');
+  const [activeZoneId, setActiveZoneId] = useState<string>('');
   const [enteringWorld, setEnteringWorld] = useState<string | null>(null);
   const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
   const [dialogueNpcId, setDialogueNpcId] = useState<string | null>(null);
   const [activeWorldPanel, setActiveWorldPanel] = useState<WorldOverlayPanel | null>(null);
   const [showHomeControls, setShowHomeControls] = useState(false);
+  const [worldLoading, setWorldLoading] = useState(false);
+  const [worldLoadProgress, setWorldLoadProgress] = useState(0);
+  const [worldLoadStatus, setWorldLoadStatus] = useState('');
+  const [worldFadingIn, setWorldFadingIn] = useState(false);
   const [conversations, setConversations] = useState<Record<string, DialogueMessage[]>>({});
   const [draftMessage, setDraftMessage] = useState('');
 
@@ -185,6 +209,15 @@ export default function App() {
     updateStoredSession(session);
     void refreshAppState();
   }, []);
+
+  // Show loading overlay when entering the world
+  useEffect(() => {
+    if (currentScreen === 'world') {
+      setWorldLoading(true);
+      setWorldLoadProgress(0);
+      setWorldLoadStatus('Initializing...');
+    }
+  }, [currentScreen]);
 
   useEffect(() => {
     if (!profileResponse) return;
@@ -238,7 +271,7 @@ export default function App() {
         openDialogue(activeNpcId);
       }
 
-      if ((event.key === 'f' || event.key === 'F') && !event.repeat && activeZoneId !== 'nexus-plaza' && !dialogueNpcId && !activeWorldPanel && !enteringWorld) {
+      if ((event.key === 'f' || event.key === 'F') && !event.repeat && activeZoneId && activeZoneId !== 'nexus-plaza' && !dialogueNpcId && !activeWorldPanel && !enteringWorld) {
         enterWorld(activeZoneId);
       }
     };
@@ -396,7 +429,7 @@ export default function App() {
     return (
       <main className="loading-shell">
         <div className="loading-card">
-          <p className="eyebrow">NEXUS</p>
+          <p className="eyebrow">ASCENDIUM</p>
           <h1>Preparing the leadership frontier</h1>
           <p>Loading your profile, prototype avatar catalog, and the world shell.</p>
         </div>
@@ -437,7 +470,7 @@ export default function App() {
           <div className="hero-overlay">
             <p className="hero-eyebrow anim-fade-in">ASU CISA &bull; OGL 200</p>
             <h1 className="hero-title">
-              <span className="hero-title-main anim-slide-left">NEXUS</span>
+              <span className="hero-title-main anim-slide-left">ASCENDIUM</span>
               <span className="hero-title-sub anim-slide-right">Leadership Frontier</span>
             </h1>
             <nav className="hero-menu anim-menu-in">
@@ -637,7 +670,39 @@ export default function App() {
               dialogueNpcId={dialogueNpcId}
               onInteractableChange={setActiveNpcId}
               onZoneChange={setActiveZoneId}
+              onProgress={(pct, status) => {
+                setWorldLoadProgress(pct);
+                setWorldLoadStatus(status);
+              }}
+              onReady={() => {
+                setWorldLoadProgress(100);
+                setWorldLoadStatus('Ready!');
+                // Brief pause at 100%, then start fade-to-black → reveal
+                setTimeout(() => {
+                  setWorldFadingIn(true);
+                  setTimeout(() => {
+                    setWorldLoading(false);
+                    setWorldFadingIn(false);
+                  }, 1000);
+                }, 400);
+              }}
             />
+
+            {/* World loading screen — shown while scene assets are loading */}
+            {worldLoading && (
+              <div className={`world-loading-overlay ${worldFadingIn ? 'is-fading' : ''}`}>
+                {!worldFadingIn && (
+                  <div className="world-loading-card">
+                    <p className="world-loading-eyebrow">ASCENDIUM</p>
+                    <h2 className="world-loading-title">Entering the Frontier</h2>
+                    <div className="world-loading-bar-track">
+                      <div className="world-loading-bar-fill" style={{ width: `${worldLoadProgress}%` }} />
+                    </div>
+                    <p className="world-loading-status">{worldLoadStatus}</p>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="world-utility-rail">
               <button
@@ -672,7 +737,7 @@ export default function App() {
                 <div className="world-overlay-header">
                   <div>
                     <span className="label">{activeWorldPanel === 'guide' ? 'World Guide' : 'Controls'}</span>
-                    <strong>{activeWorldPanel === 'guide' ? 'Leadership Frontier' : 'How to Move Through NEXUS'}</strong>
+                    <strong>{activeWorldPanel === 'guide' ? 'Leadership Frontier' : 'How to Move Through Ascendium'}</strong>
                   </div>
                   <button className="ghost-button" onClick={() => setActiveWorldPanel(null)} type="button">
                     Close
@@ -737,16 +802,14 @@ export default function App() {
               </aside>
             ) : null}
 
-            <div className="hud-card">
-              <span className="label">{currentArea.moduleTitle}</span>
-              <strong>{currentArea.label}</strong>
-              <small>{currentArea.intro}</small>
+            {activeZoneId && (
+            <div className="hud-minimal">
+              <span className="hud-minimal-zone">{currentArea.label}</span>
               {activeZoneId !== 'nexus-plaza' && !dialogueNpcId && !enteringWorld && (
-                <div className="enter-prompt">
-                  <kbd>F</kbd> Enter this world
-                </div>
+                <span className="hud-minimal-action"><kbd>F</kbd> Enter</span>
               )}
             </div>
+            )}
 
             {enteringWorld ? (
               <div className="world-transition-overlay">
@@ -760,9 +823,8 @@ export default function App() {
             ) : null}
 
             {activeNpcId && !dialogueNpcId && !activeWorldPanel ? (
-              <button className="interact-prompt" onClick={() => openDialogue(activeNpcId)} type="button">
-                <span className="label">Nearby mentor</span>
-                <strong>Press E to speak with {NPCS.find((npc) => npc.id === activeNpcId)?.name}</strong>
+              <button className="interact-minimal" onClick={() => openDialogue(activeNpcId)} type="button">
+                <kbd>E</kbd> <span>{NPCS.find((npc) => npc.id === activeNpcId)?.name}</span>
               </button>
             ) : null}
 
